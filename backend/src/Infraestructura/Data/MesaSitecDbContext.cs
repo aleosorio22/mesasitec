@@ -9,6 +9,7 @@ public class MesaSitecDbContext : DbContext
     public MesaSitecDbContext(DbContextOptions<MesaSitecDbContext> options)
         : base(options)
     {
+        
     }
 
     // Un DbSet<T> por tabla. Es "la tabla vista como colección consultable".
