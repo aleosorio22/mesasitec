@@ -35,7 +35,8 @@
   - Diagnóstico de avisos del compilador (IDE0130 de namespaces, CS0103 por el enum faltante).
   - Redacción de la tanda de **pruebas unitarias** del Dominio (máquina de estados y SLA), a partir de mi código real; entendí cada patrón nuevo (`[Theory]`/`[InlineData]`, `out`, `DateTimeKind.Utc`) antes de aceptarlo.
   - Configuración del **DbContext y el mapeo de EF Core** (`OnModelCreating`): las dos relaciones `Solicitud → Usuario`, los índices únicos y el `DeleteBehavior`; comprendí el porqué de cada línea antes de compilar.
-- **A mano / revisado y entendido por mí:** decisiones de entorno (IDE, versión de .NET), la estructura de capas y sus referencias, la corrección de cada tropiezo en el editor, la ejecución/verificación de los tests (`dotnet test`, 26/26 en verde), y las decisiones de modelado de datos (enums como número, tenant sin navegación).
+  - **Datos semilla** (`DatosSemilla.cs`): estructura, hasheo con BCrypt, fechas derivadas de `SEED_FECHA_BASE`, y la fábrica de solicitudes que reutiliza la `CalculadoraSla`. Revisé y corregí (p. ej. detecté que el correlativo debía ir alineado con la cronología, y ajustamos la fábrica para derivar la fecha del correlativo).
+- **A mano / revisado y entendido por mí:** decisiones de entorno (IDE, versión de .NET), la estructura de capas y sus referencias, la corrección de cada tropiezo en el editor, la ejecución/verificación de los tests (`dotnet test`, 26/26 en verde) y de los datos semilla (SQLite CLI), y las decisiones de modelado de datos (enums como número, tenant sin navegación, BCrypt sobre PasswordHasher).
 - **Compromiso:** entiendo lo que entrego; hay entrevista técnica con cambio en vivo, así que cada pieza queda anotada en la bitácora.
 
 > _(Ampliar a medida que avanza el proyecto.)_
@@ -55,8 +56,16 @@
 
 ---
 
+## Decisiones tomadas (candidatas a las 3 destacadas — reordenar cerca de la entrega)
+
+- **Enums en SQLite → número.** Default de EF Core (cero configuración) y da el orden semántico de `Prioridad` gratis en el `ORDER BY`; como texto ordenaría alfabético (incorrecto) y exigiría traducción extra.
+- **BCrypt sobre `PasswordHasher<T>`.** Ambos son seguros y el enunciado permite los dos. Elegí BCrypt (`BCrypt.Net-Next`) por familiaridad previa desde Node (mismo `bcrypt` del mundo Express) y por su API más directa (`HashPassword`/`Verify` estáticos, sin instanciar ni interpretar el enum de 3 estados de `PasswordHasher`). Alternativa descartada: `PasswordHasher<T>` (PBKDF2, cero dependencias externas).
+
+> Al llegar a RN-01 (aislamiento por tenant) habrá otra decisión de peso. Cerca de la entrega, elegir las 3 más fuertes para la sección 1 (probablemente: máquina de estados, RN-01, y una de estas dos).
+
+---
+
 ## Decisiones abiertas (por resolver en su capa)
 
-- ~~**Enums en SQLite:** número o texto.~~ ✅ **RESUELTO: número.** Es el default de EF Core (cero configuración) y da el orden semántico de `Prioridad` gratis en el `ORDER BY` del listado; guardarlo como texto ordenaría alfabético (incorrecto) y exigiría traducción extra. *(Candidata a figurar como una de las 3 decisiones técnicas destacadas si desplaza a otra de menor peso.)*
 - **Reabrir una solicitud (Resuelta → EnProceso):** el enunciado no dice si limpiar `FechaResolucion` / `MotivoResolucion`. Se decidirá en la capa `Aplicacion` y se documentará aquí.
-- **Casing del namespace:** unificar `Mesasitec` / `MesaSitec` a una sola forma antes de que el proyecto crezca.
+- **Casing del namespace:** unificar `Mesasitec` / `MesaSitec` a una sola forma antes de que el proyecto crezca

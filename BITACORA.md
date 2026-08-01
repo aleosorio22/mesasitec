@@ -241,7 +241,62 @@ feat(api): agrega endpoint GET /health (sin autenticacion)
 
 ---
 
+## FASE 6 — Datos semilla (BCrypt + reproducibilidad) ✅
+
+### Qué es y por qué
+- Sembrar = rellenar la BD con datos iniciales la 1.ª vez que arranca (si está vacía). §6.3. Parte del "levantar en 5 min": quien clona el repo tiene datos sin tocar nada.
+- Clase dedicada `src/Infraestructura/Data/DatosSemilla.cs` (método estático `Sembrar(db, fechaBase)`), llamada desde `Program.cs`. No se mete el sembrado dentro del `Program.cs`.
+
+### Los 3 conceptos que se estrenaron aquí
+1. **BCrypt** (hasheo de contraseñas). §5.1 descalifica texto plano/MD5/SHA1. Todos los usuarios semilla comparten `Sitec.2026`, pero en la BD solo va el **hash** (irreversible). Verificado en el log: el `PasswordHash` sale con `Size = 60` (largo de un hash BCrypt) y **nunca** aparece el texto plano.
+2. **`SEED_FECHA_BASE`** (fechas reproducibles). Todas las fechas son **offsets fijos** respecto a la fecha base (`2026-01-15T08:00:00Z` por defecto), nunca `DateTime.UtcNow` → datos idénticos siembre quien siembre. Mismo principio que la `CalculadoraSla` (recibe el tiempo por parámetro).
+3. **Idempotencia** (`if (db.Usuarios.Any()) return;`). Solo siembra si está vacía; en el 2.º arranque no duplica.
+
+### Paquete instalado
+- `BCrypt.Net-Next` (ojo: el `-Next`; `BCrypt.Net` a secas está abandonado) → en **Infraestructura**. Sin `--version` (es independiente del framework, la última estable va bien con .NET 8).
+
+### Datos creados (§6.3)
+- **2 tenants:** Cooperativa Norte, Bufete Sur.
+- **7 usuarios:** 5 Norte (1 admin, 2 agentes, 2 solicitantes) + 2 Sur (1 admin, 1 solicitante). Emails y roles literales del enunciado; nombres inventados (no los verifica ninguna prueba).
+- **8 categorías:** las 4 (Incidente 8h, Requerimiento 40h, Consulta 24h, Falla crítica 4h) en **ambos** tenants. Ojo tilde en "Falla crítica".
+- **33 solicitudes:** 25 Norte + 8 Sur, repartidas por estados y prioridades. Norte: 4 resueltas (≥3 ✓) y sobran vencidas (≥5 ✓).
+
+### Técnicas usadas
+- **Guid generados a mano** (`Guid.NewGuid()` en variables) para poder enlazar usuarios→tenant y solicitudes→categoría antes de guardar.
+- **Función local `CrearCategorias`** que devuelve `Dictionary<string, Categoria>` (mapa nombre→categoría) → permite referenciar `categoriasNorte["Incidente"]` al crear solicitudes.
+- **Función fábrica `Crear(...)`** para las solicitudes: se encarga sola del código (`SOL-{año}-{correlativo:D5}`), del SLA (**reutiliza `CalculadoraSla`** del Dominio, ya testeada), y de la coherencia por estado (resueltas/cerradas → fecha+motivo de resolución; canceladas → motivo de cancelación).
+- **Correlativo por `ref int`** independiente por tenant (Norte 1-25, Sur 1-8) → RN-07.
+- **Un solo `SaveChanges()`** al final: EF Core acumula los `Add`/`AddRange` en memoria (como un carrito) y confirma todo en una transacción.
+
+### Decisión de diseño — fecha derivada del correlativo
+- Problema detectado en revisión: si las horas se asignaban a mano, un correlativo mayor podía tener fecha **anterior** (inconsistente).
+- Solución: la fábrica calcula `horasAntesDeBase = (30 - correlativo) * 6`, así a mayor correlativo, más reciente. Cronología correcta **por construcción**, imposible de equivocar. Se quitó el parámetro manual de horas.
+
+### Detalle RN-05 en Sur
+- Bufete Sur no tiene rol `Agente`; su `Admin` actúa como agente en las solicitudes asignadas. Válido porque RN-05 permite agente con rol `Agente` **o** `Admin`.
+
+### Cableado en `Program.cs`
+- El bloque del scope ahora: `Migrate()` → lee `SEED_FECHA_BASE` de variable de entorno (`Environment.GetEnvironmentVariable`, default del enunciado) → parsea con `DateTime.Parse(..., AdjustToUniversal)` para **garantizar `DateTimeKind.Utc`** (para que salga con "Z" en el JSON) → `DatosSemilla.Sembrar(db, fechaBase)`.
+
+### Logging de EF Core silenciado
+- El sembrado escupía cientos de líneas de SQL. En `appsettings.json` → `Logging:LogLevel` se añadió `"Microsoft.EntityFrameworkCore.Database.Command": "Warning"` para no mostrar cada query (solo advertencias/errores).
+
+### Verificación (SQLite CLI)
+- `SELECT Codigo... ORDER BY Codigo` → códigos `SOL-2026-00001..00010` en orden, sin huecos → RN-07 ✅.
+- Conteo por tenant → `Cooperativa Norte|25`, `Bufete Sur|8` ✅.
+- Enums guardados como número (Estado 0=Nueva…, Prioridad 0=Baja…3=Critica) → decisión "número" confirmada en datos reales.
+
+### Commits hechos
+```
+feat(infra): datos semilla con BCrypt y SEED_FECHA_BASE reproducible
+chore(api): baja verbosidad de logs de EF Core
+```
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
+
+- **Realismo cronológico del flujo (menor, NO arreglar):** con la fecha derivada del correlativo, una solicitud "Cancelada" puede ser más reciente que una "Resuelta". El enunciado no pide simular el flujo temporal, solo cubrir estados/prioridades. Respuesta lista para entrevista: se priorizó cobertura de estados sobre simulación temporal.
 
 - **Relación `Usuario → Tenant` quedó con `Cascade`** (no `Restrict`). Solo se configuró `Restrict` en las relaciones de `Solicitud`; la de Usuario→Tenant quedó con el default. Inofensivo para esta prueba (nunca se borran tenants ni usuarios; todo es borrado lógico con `Activo`). Si se quisiera uniformar, es 1 línea en `OnModelCreating`. No urge.
 
@@ -259,8 +314,8 @@ feat(api): agrega endpoint GET /health (sin autenticacion)
 
 ## Siguientes pasos (orden sugerido §9)
 
-1. **EF Core + `DbContext` + migración + arranque automático + puerto 5080** ✅ hecho. **GET /health** ✅ hecho. Falta de la capa de datos: **datos semilla** con `SEED_FECHA_BASE` (desplazamientos fijos, nunca `DateTime.UtcNow`) → verificar lectura con Swagger. ← **AQUÍ VAMOS**
-2. **Login con JWT + `/me`.**
+1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
+2. **Login con JWT + `/me`.** ← **AQUÍ VAMOS**
 3. **`GET /solicitudes` con filtro por tenant (RN-01).** La regla más importante; hacerla bien desde el inicio.
 4. **Pruebas de permisos (RN-03)** cuando exista `Aplicacion` → cierra la 3.ª área de §5.4.
 5. **Resto de endpoints** (9 en total).
@@ -281,4 +336,4 @@ feat(api): agrega endpoint GET /health (sin autenticacion)
 
 ---
 
-*Última actualización: BD migrada y auto-aplicada al arrancar, API en :5080, primer endpoint GET /health en verde. Siguiente: datos semilla con SEED_FECHA_BASE.*
+*Última actualización: capa de datos TERMINADA — BD migrada y sembrada (2 tenants, 7 usuarios, 8 categorías, 33 solicitudes) con BCrypt y fechas reproducibles, verificado por SQLite CLI. Siguiente: login con JWT + /me.*
