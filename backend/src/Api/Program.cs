@@ -1,6 +1,10 @@
 using Mesasitec.Infraestructura.Data;
 using Microsoft.EntityFrameworkCore;
-
+using System.Text;
+using Microsoft.IdentityModel.Tokens;
+using Mesasitec.Aplicacion.Contratos;
+using Mesasitec.Infraestructura.Seguridad;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -13,6 +17,36 @@ builder.Services.AddSwaggerGen();
 var stringConnection = builder.Configuration.GetConnectionString("Default") ?? "Data Source=mesasitec.db";
 
 builder.Services.AddDbContext<MesaSitecDbContext>(options => options.UseSqlite(stringConnection));
+
+// --- Autenticación JWT ---
+var jwtSecret   = builder.Configuration["Jwt:Secret"]!;
+var jwtIssuer   = builder.Configuration["Jwt:Issuer"];
+var jwtAudience = builder.Configuration["Jwt:Audience"];
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            // Verifica que el token venga firmado con NUESTRO secreto.
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+
+            // Verifica que el emisor y la audiencia coincidan con los nuestros.
+            ValidateIssuer = true,
+            ValidIssuer = jwtIssuer,
+            ValidateAudience = true,
+            ValidAudience = jwtAudience,
+
+            // Verifica que no esté expirado (sin margen de gracia extra).
+            ValidateLifetime = true,
+            ClockSkew = TimeSpan.Zero,
+        };
+    });
+
+// Registra nuestro generador de tokens para poder inyectarlo (interfaz -> implementación).
+builder.Services.AddScoped<IGeneradorTokens, GeneradorTokens>();
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
@@ -43,6 +77,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseAuthentication(); 
 app.UseAuthorization();
 
 app.MapControllers();
