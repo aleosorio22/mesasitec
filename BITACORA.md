@@ -440,6 +440,44 @@ feat(categorias): GET /categorias (activas del tenant)
 
 ---
 
+## FASE 10 — POST /solicitudes (crear) + GET /solicitudes/{id} (detalle) ✅
+
+### DTOs
+- **Salida:** `SolicitudDetalleDto` (record) — objeto completo (§6.2 endpoint 6): todo lo del listado + `Descripcion`, `Solicitante`, `FechaResolucion`, `MotivoResolucion`, `MotivoCancelacion`. Reutilizado en crear, detalle, y luego editar/transiciones. Con `SolicitanteResumenDto`.
+- **Entrada:** `CrearSolicitudRequest`. **Empezó como record pero se cambió a `class`** (ver tropiezo). Validación con Data Annotations: `[Required]` + `[StringLength(120, MinimumLength=5)]` en título, `[StringLength(4000, MinimumLength=10)]` en descripción, `[Required]` en `CategoriaId`. `Prioridad` (enum) sin `[Required]`.
+
+### CrearAsync (servicio) — reglas que confluyen
+- **Valida categoría** del tenant y activa (`FirstOrDefaultAsync` con `TenantId==tenant`). Si no existe/otra org → null → 422. RN-01 protege también la creación.
+- **Código correlativo (RN-07):** `CountAsync` de las del tenant en el año + 1, formateado `SOL-{año}-{n:D5}`. El enunciado exime de concurrencia, así que "contar y sumar 1" es suficiente y avalado.
+- **SLA (RN-04):** `CalculadoraSla.CalcularFechaLimite(ahora, categoria.SlaHoras, prioridad)`. Aquí `ahora = DateTime.UtcNow` real (no reproducible, es creación real).
+- **El SERVIDOR fija:** `Estado=Nueva`, `SolicitanteId`=usuario del token (no del body → no puedes crear a nombre de otro), `FechaCreacion`, `FechaLimiteSla`. El cliente solo aporta título/descripción/categoría/prioridad.
+- Mapeador privado `MapearDetalle` reutilizable. `CrearAsync` reutiliza `ObtenerDetalleAsync` (pasando `Rol.Admin` para saltar el filtro RN-03 en la recarga interna).
+
+### ObtenerDetalleAsync + GET /{id}
+- `Include`(Categoria, Solicitante, Agente) + `FirstOrDefault(id && TenantId==tenant)` (RN-01). Si un Solicitante pide una que no creó → null (RN-03).
+- Controller: `[HttpGet("{id:guid}")]` (restricción de tipo GUID). null → **404 `RECURSO_NO_ENCONTRADO`**. Los 3 casos (no existe / otra org / ajena de solicitante) dan el **mismo 404**, sin revelar cuál (RN-01: 404 no 403).
+
+### 201 con Location
+- `CreatedAtAction(nameof(ObtenerPorId), new { id }, detalle)`: devuelve 201 + cabecera `Location` a `GET /{id}` + el objeto. `nameof` = nombre del método seguro ante renombrados.
+
+### Tropiezos resueltos
+1. **Records + validación por atributos** dio `InvalidOperationException` en runtime ("validation metadata must be associated with the constructor parameter"), primero en `Prioridad`, luego en `CategoriaId`. **Solución:** el DTO de ENTRADA pasó de `record` a `class` con propiedades `{ get; set; }` y atributos directos (sin `[property:]`). Aprendizaje: **records para lo que SALE (inmutable), clases para lo que ENTRA y se valida** (el model binding necesita los `set`).
+2. **Prioridad inválida** (ej. `"Foo"`) → el `JsonStringEnumConverter` falla la deserialización → 400 automático. Correcto en lógica, pero sale con formato estándar de ASP.NET (no `application/problem+json` con `codigo`). Se unificará con el manejador global.
+
+### Verificación
+- 201 con `SOL-2026-00026`, estado Nueva, solicitante del token, SLA a +6h (Incidente 8h × 0.75 Alta). ✅
+- Validaciones de longitud de título/descripción → 400. Categoría inválida → 422.
+- **Dato:** las fechas creadas con `DateTime.UtcNow` SÍ salen con `Z` (`2026-08-02T18:33:04Z`); el problema de la `Z` faltante es solo en las fechas SEMBRADAS → confirma que el fix va en el seeding/lectura, no en la serialización general.
+
+### Estado: 7/9 endpoints (health, login, me, listado, categorías, crear, detalle). Faltan: PUT (editar) y transiciones.
+
+### Commit hecho
+```
+feat(solicitudes): POST crear (codigo RN-07, SLA RN-04) y GET detalle por id
+```
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
 
 - **Fechas sin sufijo `Z`:** las respuestas devuelven `"2026-01-22T14:00:00"` sin la `Z` que exige el contrato (ISO-8601 UTC, §6). Detalle de serialización JSON a corregir globalmente (buen momento: junto al manejador de errores). Las pruebas automáticas podrían ser estrictas.
@@ -465,7 +503,7 @@ feat(categorias): GET /categorias (activas del tenant)
 1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
 2. **Login con JWT + `/me`.** ✅ **HECHO** (login, /me, Swagger Bearer). 3 endpoints listos (health, login, me).
 3. **`GET /solicitudes` con filtro por tenant (RN-01).** ✅ **TERMINADO** (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada). 4/9 endpoints.
-4. **Resto de endpoints:** `GET /categorias` ✅ hecho (5/9). Faltan: `POST /solicitudes` (crear + código + SLA) ← **AQUÍ VAMOS**, `GET /solicitudes/{id}` (detalle), `PUT /solicitudes/{id}` (editar + recalcular SLA), `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06).
+4. **Resto de endpoints:** `GET /categorias` ✅, `POST /solicitudes` ✅, `GET /solicitudes/{id}` ✅ (7/9). Faltan: `PUT /solicitudes/{id}` (editar + recalcular SLA) ← **AQUÍ VAMOS**, `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06).
 5. **Manejador global de errores** (§5.3) + centralizar `application/problem+json` + arreglar sufijo `Z` en fechas.
 6. **Pruebas de permisos (RN-03)** → cierra la 3.ª área de §5.4.
 7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
@@ -485,4 +523,4 @@ feat(categorias): GET /categorias (activas del tenant)
 
 ---
 
-*Última actualización: GET /categorias hecho (5/9 endpoints). Siguiente: POST /solicitudes (crear con código correlativo RN-07 y cálculo de SLA RN-04).*
+*Última actualización: POST /solicitudes (crear con RN-07 y RN-04) y GET /{id} (detalle con RN-01/RN-03) hechos. 7/9 endpoints. Siguiente: PUT (editar) y POST transiciones (máquina de estados).*

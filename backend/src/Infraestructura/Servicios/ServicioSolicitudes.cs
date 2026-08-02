@@ -4,6 +4,7 @@ using Mesasitec.Dominio.Enums;
 using Mesasitec.Dominio.Reglas;
 using Mesasitec.Infraestructura.Data;
 using Microsoft.EntityFrameworkCore;
+using Mesasitec.Dominio.Entidades;
 
 namespace Mesasitec.Infraestructura.Servicios;
 
@@ -108,5 +109,95 @@ public class ServicioSolicitudes : IServicioSolicitudes
             PageSize: filtros.PageSize,
             Total: total,
             TotalPaginas: totalPaginas);
+    }
+    public async Task<SolicitudDetalleDto?> CrearAsync(
+        Guid tenantId, Guid usuarioId, CrearSolicitudRequest request)
+    {
+        var ahora = DateTime.UtcNow;
+
+        // 1. Validar que la categoría exista, sea del tenant y esté activa (RN-01 aplicado aquí también).
+        var categoria = await _db.Categorias
+            .FirstOrDefaultAsync(c => c.Id == request.CategoriaId
+                                   && c.TenantId == tenantId
+                                   && c.Activo);
+
+        // Categoría inexistente o de otra organización -> null (el controller da 404/422).
+        if (categoria is null)
+            return null;
+
+        // 2. Generar el código correlativo (RN-07): contar las del tenant en el año actual + 1.
+        var anio = ahora.Year;
+        var cuantasEsteAnio = await _db.Solicitudes
+            .CountAsync(s => s.TenantId == tenantId && s.FechaCreacion.Year == anio);
+        var correlativo = cuantasEsteAnio + 1;
+        var codigo = $"SOL-{anio}-{correlativo:D5}";
+
+        // 3. Calcular el SLA (RN-04) con la calculadora del dominio.
+        var fechaLimite = CalculadoraSla.CalcularFechaLimite(
+            ahora, categoria.SlaHoras, request.Prioridad);
+
+        // 4. Crear la entidad. El servidor fija estado=Nueva, solicitante, fechas.
+        var solicitud = new Solicitud
+        {
+            Id = Guid.NewGuid(),
+            TenantId = tenantId,
+            Codigo = codigo,
+            Titulo = request.Titulo,
+            Descripcion = request.Descripcion,
+            CategoriaId = request.CategoriaId,
+            Prioridad = request.Prioridad,
+            Estado = Estado.Nueva,           // toda solicitud nace Nueva
+            SolicitanteId = usuarioId,       // el usuario del token
+            AgenteId = null,                 // aún sin agente
+            FechaCreacion = ahora,
+            FechaLimiteSla = fechaLimite,
+        };
+
+        _db.Solicitudes.Add(solicitud);
+        await _db.SaveChangesAsync();
+
+        // 5. Devolver el detalle completo reutilizando el método de detalle.
+        return await ObtenerDetalleAsync(tenantId, solicitud.Id, usuarioId, rol: Rol.Admin);
+    
+    }
+    // Mapea una entidad Solicitud a su DTO de detalle completo.
+    // Requiere que Categoria, Solicitante y Agente (si hay) vengan cargados.
+    private static SolicitudDetalleDto MapearDetalle(Solicitud s, DateTime ahora) =>
+        new SolicitudDetalleDto(
+            s.Id,
+            s.Codigo,
+            s.Titulo,
+            s.Descripcion,
+            s.Estado.ToString(),
+            s.Prioridad.ToString(),
+            new CategoriaResumenDto(s.Categoria!.Id, s.Categoria.Nombre),
+            new SolicitanteResumenDto(s.Solicitante!.Id, s.Solicitante.Nombre),
+            s.Agente == null ? null : new AgenteResumenDto(s.Agente.Id, s.Agente.Nombre),
+            s.FechaCreacion,
+            s.FechaLimiteSla,
+            s.FechaResolucion,
+            s.MotivoResolucion,
+            s.MotivoCancelacion,
+            CalculadoraSla.EstaVencida(s.FechaLimiteSla, s.Estado, ahora));
+    public async Task<SolicitudDetalleDto?> ObtenerDetalleAsync(
+        Guid tenantId, Guid id, Guid usuarioId, Rol rol)
+    {
+        var ahora = DateTime.UtcNow;
+
+        var solicitud = await _db.Solicitudes
+            .Include(s => s.Categoria)
+            .Include(s => s.Solicitante)
+            .Include(s => s.Agente)
+            .FirstOrDefaultAsync(s => s.Id == id && s.TenantId == tenantId);  // RN-01
+
+        // No existe o es de otra organización -> null (el controller da 404).
+        if (solicitud is null)
+            return null;
+
+        // RN-03: un Solicitante solo puede ver las que él creó.
+        if (rol == Rol.Solicitante && solicitud.SolicitanteId != usuarioId)
+            return null;
+
+        return MapearDetalle(solicitud, ahora);
     }
 }
