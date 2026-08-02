@@ -294,7 +294,88 @@ chore(api): baja verbosidad de logs de EF Core
 
 ---
 
+## FASE 7 — Autenticación JWT (maquinaria) 🚧 en curso
+
+### Teoría (mapa mental)
+- **JWT** = credencial firmada que el cliente lleva en cada petición (`Authorization: Bearer <token>`). El servidor NO guarda sesión (stateless): solo verifica la firma. Alternativa clásica descartada: sesiones + cookies con almacén en servidor.
+- **3 partes** (Base64, separadas por puntos): header (algoritmo), payload (claims), signature (firma).
+- El payload **NO está encriptado, solo codificado** → cualquiera lo lee. No meter secretos ahí. Sirve para garantizar que no fue alterado, no para ocultar.
+- **La firma:** el servidor firma header+payload con un **secreto**. Al recibir, recalcula la firma; si no coincide, el token fue alterado → rechazado. Por eso el secreto es crítico y va en **variable de entorno** (§5.1), nunca en git.
+- **HS256:** firma simétrica (mismo secreto firma y verifica). Lo que pide el enunciado.
+
+### Paquetes instalados
+- `Microsoft.AspNetCore.Authentication.JwtBearer` (v8.*) → en **Api** (VALIDA tokens entrantes; parte del pipeline HTTP).
+- `System.IdentityModel.Tokens.Jwt` (v8.*) → en **Infraestructura** (GENERA tokens; detalle de implementación).
+- Las dos mitades: uno fabrica el carnet, el otro lo revisa en la puerta.
+
+### Configuración del secreto (§5.1, "no versionar secretos")
+- `appsettings.json` → bloque `Jwt` con `Secret` (de **desarrollo**, falso), `Issuer` y `Audience` (`mesasitec`). El secreto de dev permite arrancar sin fricción (requisito de 5 min).
+- `.env.example` en la **raíz** del repo: documenta `JWT__SECRET` y `SEED_FECHA_BASE` con valores de ejemplo. El **doble guion bajo** `JWT__SECRET` mapea a `Jwt:Secret` y **sobrescribe** el de appsettings desde variable de entorno.
+- HS256 exige secreto de **≥32 caracteres** (256 bits) o lanza excepción.
+- `.env` ya está en `.gitignore` (verificado con `git check-ignore .env`); `.env.example` SÍ se versiona.
+
+### Generador de tokens (inversión de dependencias)
+- **Interfaz `IGeneradorTokens`** en `Aplicacion/Contratos` (contrato: "algo que genera un JWT para un usuario"). Devuelve tupla `(string token, int expiraEnSegundos)`.
+- **Implementación `GeneradorTokens`** en `Infraestructura/Seguridad`: lee config, arma los **4 claims** de §5.1 (`sub`=Id, `tenantId`, `rol`, `email`), firma con `SymmetricSecurityKey` + `HmacSha256`, expira en 8h (28800s), serializa con `JwtSecurityTokenHandler`.
+- Patrón: `Aplicacion` define QUÉ (interfaz), `Infraestructura` implementa CÓMO. Respeta el flujo de dependencias.
+
+### Validación de tokens en `Program.cs`
+- `AddAuthentication(JwtBearer).AddJwtBearer(...)` con `TokenValidationParameters`: valida firma (mismo secreto que el generador), issuer, audience y expiración. `ClockSkew = TimeSpan.Zero` (sin margen de reloj → expiración exacta).
+- `AddScoped<IGeneradorTokens, GeneradorTokens>()` y `AddScoped<IServicioAuth, ServicioAuth>()`: registra interfaz→implementación para inyectar.
+- **Orden del pipeline (obligatorio):** `UseAuthentication()` (¿quién eres?) ANTES de `UseAuthorization()` (¿puedes hacerlo?). Al revés falla: no se puede autorizar sin identidad.
+- Nota: la maquinaria está lista pero "dormida" hasta que un endpoint use `[Authorize]`. `/health` sigue público (correcto).
+
+### Servicio de login (caso de uso)
+- **Interfaz `IServicioAuth`** en `Aplicacion/Contratos`: `Task<LoginResponse?> LoginAsync(LoginRequest)`.
+- **Implementación `ServicioAuth`** en `Infraestructura/Seguridad`: busca usuario por email (`Include(Tenant)` + `FirstOrDefaultAsync`), verifica activo y contraseña con `BCrypt.Verify`, genera token, arma `LoginResponse`.
+- **Login fallido → `null`** (no excepción): un login fallido es un resultado esperado, no un error. El controller lo traducirá a 401. Mismo espíritu que `TryAplicar`.
+- **Seguridad:** mismo `null` genérico para "no existe / inactivo / contraseña mala" → no se revela cuál falló (no filtra qué emails existen). Mismo espíritu que el 404-no-403 de RN-01.
+
+### DTOs (`records`)
+- En `Aplicacion/DTOs/AuthDtos.cs`: `LoginRequest`, `UsuarioDto`, `LoginResponse`. Un `record` ≈ `type` de TS: contenedor de datos en una línea.
+- **`UsuarioDto` NO incluye `PasswordHash`** — el hash JAMÁS sale hacia el cliente. Ese es un motivo central de usar DTOs en vez de devolver la entidad cruda.
+- `Rol` va como `string` en el DTO (contrato quiere `"Agente"`, no el número).
+
+### Conceptos nuevos (desde Node)
+- **`Task<T>` ≈ `Promise<T>`**; `async`/`await` igual que en JS; convención: métodos async terminan en `Async`. Se usa async porque toca la BD (I/O).
+- **`?` en tipo** (`LoginResponse?`) = puede ser null.
+- **`Include(...)`** = eager loading, trae la relación (como un JOIN).
+- **`!`** (null-forgiving) = "confía, no es null" (usado en `_config[...]!` y `usuario.Tenant!`).
+- **Desestructuración de tupla:** `var (token, expiraEn) = ...` ≈ `const [token, expiraEn] = ...` de JS.
+
+### Decisión — `DbContext` directo en el servicio (sin patrón repositorio)
+- El `ServicioAuth` usa el `MesaSitecDbContext` directamente en vez de abstraer con un repositorio. Decisión consciente para no sobre-ingenierizar dado el alcance de 1 semana. Por eso el servicio vive en **Infraestructura** (que ya ve el DbContext), con su contrato `IServicioAuth` en **Aplicacion**. En un sistema mayor: interfaces de repositorio en Aplicacion. (Anotado en DECISIONES.md.)
+
+### Estado
+- `dotnet build` en verde. Maquinaria completa: genera, valida, y servicio de login listo.
+- ~~**Pendiente de la fase:** el controller `AuthController` (`POST /auth/login`) y `GET /me`.~~ ✅ **HECHO** (ver abajo).
+
+### Endpoints de autenticación (cierre de la fase) ✅
+- **`AuthController`** (`POST /api/v1/auth/login`): recibe `LoginRequest` con `[FromBody]`, llama a `_auth.LoginAsync`, devuelve 200 con `LoginResponse` o **401 `NO_AUTENTICADO`** si el servicio devolvió null. Controller delgado: toda la lógica en el servicio (§5.2).
+- **`MeController`** (`GET /api/v1/me`) con **`[Authorize]`** (1.er endpoint protegido): lee el `sub` de los claims validados (`User.FindFirst`), lo parsea a `Guid` con `TryParse`, y llama a `ObtenerPerfilAsync`. Devuelve el mismo `UsuarioDto` del login. (Opción B: consulta la BD en vez de meter más claims en el token → token minimal, datos frescos.)
+- **`ObtenerPerfilAsync`** añadido al servicio + método privado `static MapearUsuario` reutilizado por login y /me (DRY).
+- **Peculiaridad de .NET:** al validar, el claim `sub` a veces se renombra a `ClaimTypes.NameIdentifier`. Se leen ambos (`?? "sub"`) por seguridad.
+- **Swagger con esquema Bearer (§5.1):** `AddSwaggerGen` con `AddSecurityDefinition("Bearer", ...)` + `AddSecurityRequirement`. Da el botón "Authorize" (pegar token pelón, sin "Bearer"). Probado end-to-end desde el navegador.
+
+### Verificación
+- Login OK: `agente1@norte.test`/`Sitec.2026` → 200 con token + usuario (sin passwordHash). Contraseña mala → 401.
+- `/me` sin token → 401 (candado funciona). Con token → perfil completo.
+
+### Registro de la deuda (formato de error)
+- Los 401 se arman "a mano" con objeto anónimo → salen como `application/json`, no `application/problem+json`. Se **centralizará** con el manejador global de excepciones (§5.3) más adelante, unificando TODOS los errores.
+
+### Commits hechos
+```
+feat(auth): generacion y validacion de JWT, servicio de login con BCrypt
+chore(auth): configuracion JWT y .env.example
+feat(auth): endpoints POST /auth/login y GET /me, Swagger con esquema Bearer
+```
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
+
+- **Formato de error sin centralizar:** los 401 de auth salen como `application/json` con objeto anónimo, no `application/problem+json` (§6.1). Pendiente el manejador global (§5.3) que unifique todos los errores con `Content-Type` y forma correctos.
 
 - **Realismo cronológico del flujo (menor, NO arreglar):** con la fecha derivada del correlativo, una solicitud "Cancelada" puede ser más reciente que una "Resuelta". El enunciado no pide simular el flujo temporal, solo cubrir estados/prioridades. Respuesta lista para entrevista: se priorizó cobertura de estados sobre simulación temporal.
 
@@ -315,10 +396,10 @@ chore(api): baja verbosidad de logs de EF Core
 ## Siguientes pasos (orden sugerido §9)
 
 1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
-2. **Login con JWT + `/me`.** ← **AQUÍ VAMOS**
-3. **`GET /solicitudes` con filtro por tenant (RN-01).** La regla más importante; hacerla bien desde el inicio.
+2. **Login con JWT + `/me`.** ✅ **HECHO** (login, /me, Swagger Bearer). 3 endpoints listos (health, login, me).
+3. **`GET /solicitudes` con filtro por tenant (RN-01).** La regla MÁS IMPORTANTE de la prueba; el endpoint más complejo (filtros, búsqueda, paginación, orden). ← **AQUÍ VAMOS**
 4. **Pruebas de permisos (RN-03)** cuando exista `Aplicacion` → cierra la 3.ª área de §5.4.
-5. **Resto de endpoints** (9 en total).
+5. **Resto de endpoints:** `GET /categorias`, `POST /solicitudes`, `GET /solicitudes/{id}`, `PUT /solicitudes/{id}`, `POST /solicitudes/{id}/transiciones`. Más el **manejador global de errores** (§5.3).
 6. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
 7. **README, DECISIONES.md y limpieza** (mínimo 8 commits significativos, sin `bin/`/`obj/`/`node_modules/`/`.db`).
 
@@ -336,4 +417,4 @@ chore(api): baja verbosidad de logs de EF Core
 
 ---
 
-*Última actualización: capa de datos TERMINADA — BD migrada y sembrada (2 tenants, 7 usuarios, 8 categorías, 33 solicitudes) con BCrypt y fechas reproducibles, verificado por SQLite CLI. Siguiente: login con JWT + /me.*
+*Última actualización: maquinaria de autenticación JWT completa (generador, validación en Program.cs, servicio de login con BCrypt, DTOs). Compila en verde. Siguiente: AuthController (POST /auth/login) y GET /me protegido.*
