@@ -5,6 +5,7 @@ using Microsoft.IdentityModel.Tokens;
 using Mesasitec.Aplicacion.Contratos;
 using Mesasitec.Infraestructura.Seguridad;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -12,7 +13,36 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    // Define el esquema de seguridad "Bearer" (§5.1): un candado donde pegar el JWT.
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Pega aquí el accessToken del login (sin escribir 'Bearer').",
+    });
+
+    // Aplica ese esquema a los endpoints, para que Swagger mande el token automáticamente.
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference
+                {
+                    Type = ReferenceType.SecurityScheme,
+                    Id = "Bearer"
+                }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
+
 
 var stringConnection = builder.Configuration.GetConnectionString("Default") ?? "Data Source=mesasitec.db";
 
@@ -45,8 +75,8 @@ builder.Services
         };
     });
 
-// Registra nuestro generador de tokens para poder inyectarlo (interfaz -> implementación).
 builder.Services.AddScoped<IGeneradorTokens, GeneradorTokens>();
+builder.Services.AddScoped<IServicioAuth, ServicioAuth>();
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())

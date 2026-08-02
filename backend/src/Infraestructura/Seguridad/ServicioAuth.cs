@@ -1,5 +1,6 @@
 using Mesasitec.Aplicacion.Contratos;
 using Mesasitec.Aplicacion.DTOs;
+using Mesasitec.Dominio.Entidades;
 using Mesasitec.Infraestructura.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -36,15 +37,30 @@ public class ServicioAuth : IServicioAuth
         // 3. Credenciales válidas: genera el token.
         var (token, expiraEn) = _generador.Generar(usuario);
 
-        // 4. Arma el DTO de respuesta (SIN el passwordHash, claro).
-        var usuarioDto = new UsuarioDto(
+        // 4. Arma el DTO de respuesta reutilizando el mapeador (SIN passwordHash).
+        return new LoginResponse(token, expiraEn, MapearUsuario(usuario));
+    }
+
+    public async Task<UsuarioDto?> ObtenerPerfilAsync(Guid usuarioId)
+    {
+        var usuario = await _db.Usuarios
+            .Include(u => u.Tenant)
+            .FirstOrDefaultAsync(u => u.Id == usuarioId);
+
+        if (usuario is null || !usuario.Activo)
+            return null;
+
+        return MapearUsuario(usuario);
+    }
+
+    // Método privado reutilizable: convierte una entidad Usuario en su DTO.
+    // Requiere que el Tenant venga cargado (Include). static porque no usa estado de la instancia.
+    private static UsuarioDto MapearUsuario(Usuario usuario) =>
+        new UsuarioDto(
             usuario.Id,
             usuario.Nombre,
             usuario.Email,
-            usuario.Rol.ToString(),          // enum -> "Agente"
+            usuario.Rol.ToString(),
             usuario.TenantId,
-            usuario.Tenant!.Nombre);         // el nombre del tenant que trajimos con Include
-
-        return new LoginResponse(token, expiraEn, usuarioDto);
-    }
+            usuario.Tenant!.Nombre);
 }

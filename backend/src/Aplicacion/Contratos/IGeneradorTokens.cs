@@ -1,4 +1,5 @@
 using Mesasitec.Dominio.Entidades;
+using Mesasitec.Aplicacion.DTOs;
 
 namespace Mesasitec.Aplicacion.Contratos;
 
@@ -8,4 +9,5 @@ public interface IGeneradorTokens
 {
     // Devuelve el token firmado y cuántos segundos dura (para el campo expiraEn del login).
     (string token, int expiraEnSegundos) Generar(Usuario usuario);
+    
 }
