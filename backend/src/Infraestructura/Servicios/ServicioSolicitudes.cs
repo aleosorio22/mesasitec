@@ -200,4 +200,61 @@ public class ServicioSolicitudes : IServicioSolicitudes
 
         return MapearDetalle(solicitud, ahora);
     }
+    public async Task<(ResultadoEdicion resultado, SolicitudDetalleDto? detalle)> EditarAsync(
+        Guid tenantId, Guid id, Guid usuarioId, Rol rol, EditarSolicitudRequest request)
+    {
+        var ahora = DateTime.UtcNow;
+
+        // 1. Buscar la solicitud con sus relaciones (RN-01: filtro por tenant).
+        var solicitud = await _db.Solicitudes
+            .Include(s => s.Categoria)
+            .Include(s => s.Solicitante)
+            .Include(s => s.Agente)
+            .FirstOrDefaultAsync(s => s.Id == id && s.TenantId == tenantId);
+
+        // 2. No existe o es de otra organización -> NoEncontrada (404).
+        if (solicitud is null)
+            return (ResultadoEdicion.NoEncontrada, null);
+
+        // 3. RN-03: un Solicitante solo puede editar las que él creó.
+        if (rol == Rol.Solicitante && solicitud.SolicitanteId != usuarioId)
+            return (ResultadoEdicion.NoEncontrada, null);   // 404, no revela existencia
+
+        // 4. RN-08: solo editable en Nueva o Asignada.
+        // 4. RN-03: reglas de estado para editar, según el rol.
+        //    - Solicitante: SOLO en estado Nueva (literal del enunciado).
+        //    - Admin/Agente: mientras no esté en estado final ni resuelta
+        //      (Nueva, Asignada o EnProceso). Decisión documentada ante ambigüedad.
+        bool editable = rol == Rol.Solicitante
+            ? solicitud.Estado == Estado.Nueva
+            : solicitud.Estado is (Estado.Nueva or Estado.Asignada or Estado.EnProceso);
+
+        if (!editable)
+            return (ResultadoEdicion.EstadoNoEditable, null);   // 409
+
+        // 5. Validar la nueva categoría (del tenant, activa).
+        var categoria = await _db.Categorias
+            .FirstOrDefaultAsync(c => c.Id == request.CategoriaId
+                                   && c.TenantId == tenantId
+                                   && c.Activo);
+        if (categoria is null)
+            return (ResultadoEdicion.CategoriaInvalida, null);   // 422
+
+        // 6. Actualizar los campos editables.
+        solicitud.Titulo = request.Titulo;
+        solicitud.Descripcion = request.Descripcion;
+        solicitud.CategoriaId = request.CategoriaId;
+        solicitud.Prioridad = request.Prioridad;
+
+        // 7. Recalcular el SLA (RN-04) desde la FechaCreacion ORIGINAL (Opción A).
+        solicitud.FechaLimiteSla = CalculadoraSla.CalcularFechaLimite(
+            solicitud.FechaCreacion, categoria.SlaHoras, request.Prioridad);
+
+        await _db.SaveChangesAsync();
+
+        // 8. La navegación Categoria puede haber cambiado; recargarla para el DTO.
+        await _db.Entry(solicitud).Reference(s => s.Categoria).LoadAsync();
+
+        return (ResultadoEdicion.Ok, MapearDetalle(solicitud, ahora));
+    }
 }

@@ -81,4 +81,44 @@ public class SolicitudesController : ApiControllerBase
 
         return Ok(detalle);
     }
+    [HttpPut("{id:guid}")]
+    public async Task<IActionResult> Editar(Guid id, [FromBody] EditarSolicitudRequest request)
+    {
+        var (resultado, detalle) = await _servicio.EditarAsync(
+            TenantIdActual, id, UsuarioIdActual, RolActual, request);
+
+        return resultado switch
+        {
+            ResultadoEdicion.Ok => Ok(detalle),
+
+            ResultadoEdicion.NoEncontrada => NotFound(new
+            {
+                type = "https://mesasitec.local/errores/recurso-no-encontrado",
+                title = "Recurso no encontrado",
+                status = 404,
+                detail = "La solicitud no existe.",
+                codigo = "RECURSO_NO_ENCONTRADO",
+            }),
+
+            ResultadoEdicion.EstadoNoEditable => Conflict(new
+            {
+                type = "https://mesasitec.local/errores/conflicto-estado",
+                title = "Conflicto de estado",
+                status = 409,
+                detail = "Solo se pueden editar solicitudes en estado Nueva o Asignada.",
+                codigo = "CONFLICTO_ESTADO",
+            }),
+
+            ResultadoEdicion.CategoriaInvalida => UnprocessableEntity(new
+            {
+                type = "https://mesasitec.local/errores/validacion",
+                title = "Validación",
+                status = 422,
+                detail = "La categoría no existe o no pertenece a su organización.",
+                codigo = "VALIDACION",
+            }),
+
+            _ => StatusCode(500),
+        };
+    }
 }

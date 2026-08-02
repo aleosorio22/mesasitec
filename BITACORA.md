@@ -478,7 +478,36 @@ feat(solicitudes): POST crear (codigo RN-07, SLA RN-04) y GET detalle por id
 
 ---
 
+## FASE 10.5 — PUT /solicitudes/{id} (editar) + corrección de RN-03 ✅
+
+### PUT editar
+- DTO `EditarSolicitudRequest` (`class`, misma forma que crear, mismas validaciones).
+- Patrón de resultado múltiple: enum `ResultadoEdicion { Ok, NoEncontrada, EstadoNoEditable, CategoriaInvalida }` + tupla `(ResultadoEdicion, SolicitudDetalleDto?)`. El controller mapea cada caso a su HTTP con un `switch`: Ok→200, NoEncontrada→404, EstadoNoEditable→409 `CONFLICTO_ESTADO`... *(ver corrección de código abajo)*, CategoriaInvalida→422 `VALIDACION`.
+- **SLA recalculado desde `FechaCreacion` ORIGINAL** (Opción A, confirma RN-04 línea 165: "fechaCreacion no se toca nunca"). Verificado: editar a Falla crítica + Critica → límite a +2h desde la creación original.
+- `change tracking` de EF: se modifican propiedades de la entidad rastreada y `SaveChangesAsync` genera el `UPDATE` (sin `Add`).
+
+### ⚠️ Corrección importante — regla de estado para editar (RN-03, no "RN-08")
+- **Error cometido:** se implementó primero como "editable en Nueva o Asignada para todos", citando una "RN-08" que **NO EXISTE**. Fue una regla inventada.
+- **Regla real** (RN-03 tabla línea 137 + §6.2 línea 397):
+  - **Solicitante:** edita solo las propias y **solo en estado `Nueva`**.
+  - **Admin/Agente:** el enunciado no fija estado explícito → **decisión documentada ante ambigüedad**: editable en `Nueva`, `Asignada` o `EnProceso` (no final ni resuelta).
+- **Corrección aplicada** en `EditarAsync`: ternario por rol → `rol == Solicitante ? estado == Nueva : estado in (Nueva, Asignada, EnProceso)`.
+- Verificado: Solicitante editando una Asignada → 409; Admin/Agente editando una EnProceso → 200.
+- **Nota para el código de error:** el enunciado usa `CONFLICTO_ESTADO`... revisar — el §6.1 no lista ese código exacto; el más cercano para "no editable por estado" podría necesitar ajuste al unificar errores. (Anotado para la fase del manejador global.)
+
+### Estado: 8/9 endpoints. Falta solo transiciones (el gran final).
+
+### Commit hecho
+```
+feat(solicitudes): PUT editar con recalculo de SLA y regla de estado por rol (RN-03)
+```
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
+
+- **Decisión documentada (ambigüedad RN-03 edición):** Admin/Agente pueden editar en Nueva/Asignada/EnProceso (el enunciado solo fija estado para Solicitante = Nueva). Va en DECISIONES.md.
+- **Código de error de "estado no editable":** se usó `CONFLICTO_ESTADO`, que NO está en la tabla del §6.1. Revisar al unificar errores: quizá deba ser otro, o documentarse. Las pruebas automáticas revisan el campo `codigo`.
 
 - **Fechas sin sufijo `Z`:** las respuestas devuelven `"2026-01-22T14:00:00"` sin la `Z` que exige el contrato (ISO-8601 UTC, §6). Detalle de serialización JSON a corregir globalmente (buen momento: junto al manejador de errores). Las pruebas automáticas podrían ser estrictas.
 
@@ -503,7 +532,7 @@ feat(solicitudes): POST crear (codigo RN-07, SLA RN-04) y GET detalle por id
 1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
 2. **Login con JWT + `/me`.** ✅ **HECHO** (login, /me, Swagger Bearer). 3 endpoints listos (health, login, me).
 3. **`GET /solicitudes` con filtro por tenant (RN-01).** ✅ **TERMINADO** (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada). 4/9 endpoints.
-4. **Resto de endpoints:** `GET /categorias` ✅, `POST /solicitudes` ✅, `GET /solicitudes/{id}` ✅ (7/9). Faltan: `PUT /solicitudes/{id}` (editar + recalcular SLA) ← **AQUÍ VAMOS**, `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06).
+4. **Resto de endpoints:** `GET /categorias` ✅, `POST /solicitudes` ✅, `GET /{id}` ✅, `PUT /{id}` ✅ (8/9). Falta: `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06) ← **AQUÍ VAMOS** (el gran final del backend).
 5. **Manejador global de errores** (§5.3) + centralizar `application/problem+json` + arreglar sufijo `Z` en fechas.
 6. **Pruebas de permisos (RN-03)** → cierra la 3.ª área de §5.4.
 7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
@@ -523,4 +552,4 @@ feat(solicitudes): POST crear (codigo RN-07, SLA RN-04) y GET detalle por id
 
 ---
 
-*Última actualización: POST /solicitudes (crear con RN-07 y RN-04) y GET /{id} (detalle con RN-01/RN-03) hechos. 7/9 endpoints. Siguiente: PUT (editar) y POST transiciones (máquina de estados).*
+*Última actualización: PUT editar hecho + CORREGIDA la regla de estado (era una "RN-08" inventada; la real es RN-03: Solicitante solo Nueva, Admin/Agente hasta EnProceso). 8/9 endpoints. Siguiente: POST transiciones (máquina de estados, el gran final).*

@@ -19,4 +19,9 @@ public interface IServicioSolicitudes
     // o un Solicitante intenta ver una que no creó (RN-01 + RN-03).
     Task<SolicitudDetalleDto?> ObtenerDetalleAsync(
         Guid tenantId, Guid id, Guid usuarioId, Rol rol);
+
+    // Edita una solicitud (RN-08: solo Nueva/Asignada). Devuelve el resultado y,
+    // si fue Ok, el detalle actualizado.
+    Task<(ResultadoEdicion resultado, SolicitudDetalleDto? detalle)> EditarAsync(
+        Guid tenantId, Guid id, Guid usuarioId, Rol rol, EditarSolicitudRequest request);
 }
