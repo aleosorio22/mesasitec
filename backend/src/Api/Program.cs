@@ -85,6 +85,7 @@ builder.Services
 builder.Services.AddScoped<IGeneradorTokens, GeneradorTokens>();
 builder.Services.AddScoped<IServicioAuth, ServicioAuth>();
 builder.Services.AddScoped<IServicioSolicitudes, ServicioSolicitudes>();
+builder.Services.AddScoped<IServicioCategorias, ServicioCategorias>();
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())

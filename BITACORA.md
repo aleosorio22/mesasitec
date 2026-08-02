@@ -1,5 +1,11 @@
 # Bitácora — Proyecto MesaSitec
 
+> Prueba técnica Junior (.NET 8). Bitácora **general y única**: consolida todo lo hecho
+> y se va actualizando a medida que avanza el proyecto. Sirve para retomar el trabajo
+> en un chat nuevo sin perder contexto.
+>
+> Reemplaza a las antiguas `BITACORA01.md` (setup) y `BITACORA02.md` (modelado del Dominio).
+
 ---
 
 ## Contexto del proyecto
@@ -418,6 +424,22 @@ feat(solicitudes): ordenamiento semantico y paginacion con validacion 400
 
 ---
 
+## FASE 9 — GET /categorias ✅
+
+- El endpoint más simple (§6.2, endpoint 3): categorías **activas** del tenant, lista sin paginar.
+- DTO `CategoriaDto(Id, Nombre, SlaHoras)` — distinto del `CategoriaResumenDto` (que va anidado en solicitudes, sin `SlaHoras`). Dos DTOs para dos propósitos.
+- Servicio propio `IServicioCategorias`/`ServicioCategorias` (Opción A, consistencia con el patrón). Solo recibe `tenantId` (no depende de rol ni usuario).
+- Consulta compacta: `.Where(c => c.TenantId == tenantId && c.Activo)` (RN-01 + activas) `.OrderBy(Nombre)` `.Select(new CategoriaDto(...))` `.ToListAsync()`.
+- **Detalle técnico:** aquí el `.Select` a DTO va DENTRO de la consulta (antes de `ToListAsync`) porque el mapeo es trivial (copiar 3 campos) y EF SÍ lo traduce a SQL. En solicitudes NO se podía porque usaba `CalculadoraSla` (código C#). Aquí es más eficiente (solo trae las columnas necesarias).
+- Verificado: `agente1@norte.test` → 4 categorías (Consulta 24, Falla crítica 4, Incidente 8, Requerimiento 40), ordenadas alfabéticamente. **5/9 endpoints listos.**
+
+### Commit hecho
+```
+feat(categorias): GET /categorias (activas del tenant)
+```
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
 
 - **Fechas sin sufijo `Z`:** las respuestas devuelven `"2026-01-22T14:00:00"` sin la `Z` que exige el contrato (ISO-8601 UTC, §6). Detalle de serialización JSON a corregir globalmente (buen momento: junto al manejador de errores). Las pruebas automáticas podrían ser estrictas.
@@ -443,7 +465,7 @@ feat(solicitudes): ordenamiento semantico y paginacion con validacion 400
 1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
 2. **Login con JWT + `/me`.** ✅ **HECHO** (login, /me, Swagger Bearer). 3 endpoints listos (health, login, me).
 3. **`GET /solicitudes` con filtro por tenant (RN-01).** ✅ **TERMINADO** (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada). 4/9 endpoints.
-4. **Resto de endpoints:** `GET /categorias` (fácil), `POST /solicitudes` (crear + código + SLA), `GET /solicitudes/{id}` (detalle), `PUT /solicitudes/{id}` (editar + recalcular SLA), `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06). ← **AQUÍ VAMOS** (empezar por categorías)
+4. **Resto de endpoints:** `GET /categorias` ✅ hecho (5/9). Faltan: `POST /solicitudes` (crear + código + SLA) ← **AQUÍ VAMOS**, `GET /solicitudes/{id}` (detalle), `PUT /solicitudes/{id}` (editar + recalcular SLA), `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06).
 5. **Manejador global de errores** (§5.3) + centralizar `application/problem+json` + arreglar sufijo `Z` en fechas.
 6. **Pruebas de permisos (RN-03)** → cierra la 3.ª área de §5.4.
 7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
@@ -463,4 +485,4 @@ feat(solicitudes): ordenamiento semantico y paginacion con validacion 400
 
 ---
 
-*Última actualización: GET /solicitudes TERMINADO — el endpoint más complejo (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada), todo en el servidor. 4/9 endpoints. Siguiente: GET /categorias y luego POST/PUT/detalle/transiciones.*
+*Última actualización: GET /categorias hecho (5/9 endpoints). Siguiente: POST /solicitudes (crear con código correlativo RN-07 y cálculo de SLA RN-04).*
