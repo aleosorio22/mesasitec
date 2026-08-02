@@ -6,12 +6,19 @@ using Mesasitec.Aplicacion.Contratos;
 using Mesasitec.Infraestructura.Seguridad;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.OpenApi.Models;
+using Mesasitec.Infraestructura.Servicios;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        // Serializa/deserializa los enums por su NOMBRE ("Nueva") en vez de por número (0).
+        options.JsonSerializerOptions.Converters.Add(
+            new System.Text.Json.Serialization.JsonStringEnumConverter());
+    });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -77,6 +84,7 @@ builder.Services
 
 builder.Services.AddScoped<IGeneradorTokens, GeneradorTokens>();
 builder.Services.AddScoped<IServicioAuth, ServicioAuth>();
+builder.Services.AddScoped<IServicioSolicitudes, ServicioSolicitudes>();
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())

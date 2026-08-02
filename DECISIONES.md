@@ -36,6 +36,7 @@
   - Redacción de la tanda de **pruebas unitarias** del Dominio (máquina de estados y SLA), a partir de mi código real; entendí cada patrón nuevo (`[Theory]`/`[InlineData]`, `out`, `DateTimeKind.Utc`) antes de aceptarlo.
   - Configuración del **DbContext y el mapeo de EF Core** (`OnModelCreating`): las dos relaciones `Solicitud → Usuario`, los índices únicos y el `DeleteBehavior`; comprendí el porqué de cada línea antes de compilar.
   - **Datos semilla** (`DatosSemilla.cs`): estructura, hasheo con BCrypt, fechas derivadas de `SEED_FECHA_BASE`, y la fábrica de solicitudes que reutiliza la `CalculadoraSla`. Revisé y corregí (p. ej. detecté que el correlativo debía ir alineado con la cronología, y ajustamos la fábrica para derivar la fecha del correlativo).
+  - **Autenticación JWT:** generador de tokens, validación en `Program.cs`, servicio de login con BCrypt, y los DTOs como `records`. Entendí la teoría (firma, claims, por qué el secreto es crítico) antes de cablear, y el patrón de interfaces (`IGeneradorTokens`, `IServicioAuth`) para respetar el flujo de dependencias.
 - **A mano / revisado y entendido por mí:** decisiones de entorno (IDE, versión de .NET), la estructura de capas y sus referencias, la corrección de cada tropiezo en el editor, la ejecución/verificación de los tests (`dotnet test`, 26/26 en verde) y de los datos semilla (SQLite CLI), y las decisiones de modelado de datos (enums como número, tenant sin navegación, BCrypt sobre PasswordHasher).
 - **Compromiso:** entiendo lo que entrego; hay entrevista técnica con cambio en vivo, así que cada pieza queda anotada en la bitácora.
 
@@ -60,12 +61,14 @@
 
 - **Enums en SQLite → número.** Default de EF Core (cero configuración) y da el orden semántico de `Prioridad` gratis en el `ORDER BY`; como texto ordenaría alfabético (incorrecto) y exigiría traducción extra.
 - **BCrypt sobre `PasswordHasher<T>`.** Ambos son seguros y el enunciado permite los dos. Elegí BCrypt (`BCrypt.Net-Next`) por familiaridad previa desde Node (mismo `bcrypt` del mundo Express) y por su API más directa (`HashPassword`/`Verify` estáticos, sin instanciar ni interpretar el enum de 3 estados de `PasswordHasher`). Alternativa descartada: `PasswordHasher<T>` (PBKDF2, cero dependencias externas).
+- **`DbContext` directo en los servicios, sin patrón repositorio.** Los servicios de aplicación (empezando por `ServicioAuth`) usan el `MesaSitecDbContext` directamente en vez de abstraer el acceso a datos tras interfaces de repositorio. Decisión consciente para no sobre-ingenierizar dado el alcance de una semana. Consecuencia de diseño: la implementación del servicio vive en **Infraestructura** (que ya referencia el DbContext), y solo su **contrato** (`IServicioAuth`) vive en **Aplicacion** — así el flujo de dependencias hacia adentro se mantiene intacto y `Api` depende del contrato, no de la implementación. En un sistema mayor: interfaces de repositorio en la capa de Aplicación. Alternativa descartada: patrón repositorio completo (más limpio, pero sobrado para este alcance).
+- **RN-01 (aislamiento) apoyado en el `tenantId` del token, filtrando en cada consulta.** El `tenantId` se lee de los claims del JWT (no de la URL ni de parámetros que el usuario controle) y se aplica como primer `.Where()` en toda consulta de solicitudes. Para no repetir la extracción de claims en cada controller, se centralizó en una clase base `ApiControllerBase` (propiedades `TenantIdActual`/`UsuarioIdActual`/`RolActual`). Alternativa descartada: query filters globales de EF Core (más "mágicos" pero menos explícitos; con el filtro manual queda visible en cada consulta que el aislamiento se aplica, lo cual es más fácil de auditar y defender).
 
-> Al llegar a RN-01 (aislamiento por tenant) habrá otra decisión de peso. Cerca de la entrega, elegir las 3 más fuertes para la sección 1 (probablemente: máquina de estados, RN-01, y una de estas dos).
+> Cerca de la entrega, elegir las 3 más fuertes para la sección 1 (probablemente: máquina de estados, RN-01/aislamiento, y BCrypt o DbContext directo).
 
 ---
 
 ## Decisiones abiertas (por resolver en su capa)
 
 - **Reabrir una solicitud (Resuelta → EnProceso):** el enunciado no dice si limpiar `FechaResolucion` / `MotivoResolucion`. Se decidirá en la capa `Aplicacion` y se documentará aquí.
-- **Casing del namespace:** unificar `Mesasitec` / `MesaSitec` a una sola forma antes de que el proyecto crezca
+- **Casing del namespace:** unificar `Mesasitec` / `MesaSitec` a una sola forma antes de que el proyecto crezca.

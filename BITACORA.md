@@ -373,9 +373,46 @@ feat(auth): endpoints POST /auth/login y GET /me, Swagger con esquema Bearer
 
 ---
 
+## FASE 8 — GET /solicitudes: RN-01, RN-03, filtros y búsqueda 🚧 en curso
+
+### La regla más importante (RN-01) + permisos (RN-03)
+- **Clase base `ApiControllerBase`** (`abstract`, hereda de `ControllerBase`, lleva `[ApiController]`): centraliza la lectura del contexto del usuario desde los claims → propiedades `protected` `TenantIdActual`, `UsuarioIdActual`, `RolActual`. Los controllers de solicitudes heredan de ella, no de `ControllerBase`. (Auth/Health siguen con `ControllerBase`, no necesitan tenant.)
+- **`protected`** = lo ven esta clase y las hijas. Propiedades con `=>` = calculadas (getters). `Guid.Parse`/`Enum.Parse` sin `Try` porque tras `[Authorize]` los claims siempre existen.
+- **RN-01 (aislamiento):** `_db.Solicitudes.Where(s => s.TenantId == tenantId)` SIEMPRE, primero. El `tenantId` viene del TOKEN, no de la URL → el usuario no puede pedir datos de otra org.
+- **RN-03 (rol):** si `rol == Solicitante` → `.Where(s => s.SolicitanteId == usuarioId)` (solo las suyas). Admin/Agente ven todas las del tenant.
+- **Verificado en 3 usuarios:** `agente1@norte.test`→25, `user1@norte.test`→13 (solo las suyas, códigos salteados), `user1@sur.test`→8. Ninguna org ve datos de otra. ✅ **RN-01 y RN-03 clavados.**
+
+### Arquitectura del endpoint
+- Mismo patrón que auth: interfaz `IServicioSolicitudes` en `Aplicacion`, implementación `ServicioSolicitudes` en `Infraestructura` (usa `DbContext` directo). Controller delgado que pasa el contexto del usuario al servicio.
+- DTOs (`records`) en `Aplicacion/DTOs/SolicitudDtos.cs`: `CategoriaResumenDto`, `AgenteResumenDto` (anidados), `SolicitudListaDto` (item con `Estado`/`Prioridad` como string y `Vencida` calculado), y `ResultadoPaginado<T>` (genérico).
+- Objeto de filtros `SolicitudFiltros` (`class`, todo nullable) con `[FromQuery]` → ASP.NET lo rellena del query string.
+
+### Concepto clave: `IQueryable` y ejecución diferida
+- Los `.Where()`/`.Include()` se ACUMULAN sin tocar la BD; la consulta real se dispara en `CountAsync`/`ToListAsync`. EF Core lo traduce a UN SQL eficiente (WHERE, JOIN en el servidor). Cumple "el filtrado se resuelve en el servidor" (§6.2). Parecido al query builder de Prisma/Knex.
+
+### Filtros (§6.2) — cada uno solo si no es null
+- `estado`, `prioridad`, `categoriaId`, `agenteId`: `if (filtro is not null) query = query.Where(...)`. Se encadenan → un solo SQL.
+- **`vencidas`: caso especial.** Se aplica DESPUÉS del mapeo, en memoria, porque `vencida` no es columna: lo calcula `CalculadoraSla.EstaVencida` (lógica C# que EF no traduce a SQL). Trade-off para entrevista: en memoria funciona a esta escala; a gran escala se reimplementaría como condición SQL.
+- El mapeo a DTO va tras `ToListAsync` (no dentro del query) porque usa `CalculadoraSla` (código C#).
+
+### Búsqueda `q` (§6.2)
+- Busca en título, descripción y código, **sin distinguir mayúsculas**: `Q.Trim().ToLower()` y cada campo `.ToLower().Contains(termino)` con `||`. Solo si `!IsNullOrWhiteSpace(Q)`. EF lo traduce a `LIKE`/`LOWER` → en el servidor.
+- Verificado: `portal` y `PORTAL` dan el mismo resultado; busca también por código.
+
+### Serialización de enums por NOMBRE (ajuste importante)
+- Por defecto los enums salían/entraban como número (0-5). El contrato quiere `"Nueva"`/`Alta`. Se añadió `JsonStringEnumConverter` en `AddControllers().AddJsonOptions(...)`. Ahora la API acepta `?estado=Nueva` y devuelve `"estado":"Nueva"` en todos lados.
+
+### Estado
+- `dotnet build` verde. Funcionan: RN-01, RN-03, los 4 filtros simples, `vencidas`, y búsqueda `q`.
+- **Pendiente de la fase:** ordenamiento `sort` (con orden semántico de prioridad) y paginación `page`/`pageSize` (con validación 400 `PARAMETRO_INVALIDO`).
+
+### Commits (pendiente de commitear este bloque)
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
 
-- **Formato de error sin centralizar:** los 401 de auth salen como `application/json` con objeto anónimo, no `application/problem+json` (§6.1). Pendiente el manejador global (§5.3) que unifique todos los errores con `Content-Type` y forma correctos.
+- **Fechas sin sufijo `Z`:** las respuestas devuelven `"2026-01-22T14:00:00"` sin la `Z` que exige el contrato (ISO-8601 UTC, §6). Detalle de serialización JSON a corregir globalmente (buen momento: junto al manejador de errores). Las pruebas automáticas podrían ser estrictas.
 
 - **Realismo cronológico del flujo (menor, NO arreglar):** con la fecha derivada del correlativo, una solicitud "Cancelada" puede ser más reciente que una "Resuelta". El enunciado no pide simular el flujo temporal, solo cubrir estados/prioridades. Respuesta lista para entrevista: se priorizó cobertura de estados sobre simulación temporal.
 
@@ -397,7 +434,7 @@ feat(auth): endpoints POST /auth/login y GET /me, Swagger con esquema Bearer
 
 1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
 2. **Login con JWT + `/me`.** ✅ **HECHO** (login, /me, Swagger Bearer). 3 endpoints listos (health, login, me).
-3. **`GET /solicitudes` con filtro por tenant (RN-01).** La regla MÁS IMPORTANTE de la prueba; el endpoint más complejo (filtros, búsqueda, paginación, orden). ← **AQUÍ VAMOS**
+3. **`GET /solicitudes` con filtro por tenant (RN-01).** 🚧 RN-01, RN-03, filtros y búsqueda ✅. Falta: ordenamiento `sort` (orden semántico de prioridad) y paginación con validación 400. ← **AQUÍ VAMOS**
 4. **Pruebas de permisos (RN-03)** cuando exista `Aplicacion` → cierra la 3.ª área de §5.4.
 5. **Resto de endpoints:** `GET /categorias`, `POST /solicitudes`, `GET /solicitudes/{id}`, `PUT /solicitudes/{id}`, `POST /solicitudes/{id}/transiciones`. Más el **manejador global de errores** (§5.3).
 6. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
@@ -417,4 +454,4 @@ feat(auth): endpoints POST /auth/login y GET /me, Swagger con esquema Bearer
 
 ---
 
-*Última actualización: maquinaria de autenticación JWT completa (generador, validación en Program.cs, servicio de login con BCrypt, DTOs). Compila en verde. Siguiente: AuthController (POST /auth/login) y GET /me protegido.*
+*Última actualización: GET /solicitudes con RN-01 (aislamiento) y RN-03 (rol) verificados en 3 usuarios, más filtros, vencidas y búsqueda q. Enums serializados por nombre. Siguiente: ordenamiento (orden semántico de prioridad) y paginación con validación.*
