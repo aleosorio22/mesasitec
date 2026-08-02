@@ -19,6 +19,19 @@ public class SolicitudesController : ApiControllerBase
     [HttpGet]
     public async Task<IActionResult> Listar([FromQuery] SolicitudFiltros filtros)
     {
+        // Validación de parámetros de paginación (§6.2). Fuera de rango -> 400 PARAMETRO_INVALIDO.
+        if (filtros.Page < 1 || filtros.PageSize > 100 || filtros.PageSize < 1)
+        {
+            return BadRequest(new
+            {
+                type = "https://mesasitec.local/errores/parametro-invalido",
+                title = "Parámetro inválido",
+                status = 400,
+                detail = "page debe ser >= 1 y pageSize debe estar entre 1 y 100.",
+                codigo = "PARAMETRO_INVALIDO",
+            });
+        }
+
         var resultado = await _servicio.ListarAsync(
             TenantIdActual, UsuarioIdActual, RolActual, filtros);
         return Ok(resultado);

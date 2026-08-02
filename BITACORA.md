@@ -1,11 +1,5 @@
 # Bitácora — Proyecto MesaSitec
 
-> Prueba técnica Junior (.NET 8). Bitácora **general y única**: consolida todo lo hecho
-> y se va actualizando a medida que avanza el proyecto. Sirve para retomar el trabajo
-> en un chat nuevo sin perder contexto.
->
-> Reemplaza a las antiguas `BITACORA01.md` (setup) y `BITACORA02.md` (modelado del Dominio).
-
 ---
 
 ## Contexto del proyecto
@@ -402,11 +396,25 @@ feat(auth): endpoints POST /auth/login y GET /me, Swagger con esquema Bearer
 ### Serialización de enums por NOMBRE (ajuste importante)
 - Por defecto los enums salían/entraban como número (0-5). El contrato quiere `"Nueva"`/`Alta`. Se añadió `JsonStringEnumConverter` en `AddControllers().AddJsonOptions(...)`. Ahora la API acepta `?estado=Nueva` y devuelve `"estado":"Nueva"` en todos lados.
 
-### Estado
-- `dotnet build` verde. Funcionan: RN-01, RN-03, los 4 filtros simples, `vencidas`, y búsqueda `q`.
-- **Pendiente de la fase:** ordenamiento `sort` (con orden semántico de prioridad) y paginación `page`/`pageSize` (con validación 400 `PARAMETRO_INVALIDO`).
+### Ordenamiento `sort` (§6.2) ✅
+- `switch` de expresión sobre `filtros.Sort`: `fechaCreacion`/`-fechaCreacion`/`prioridad`/`-prioridad`/`codigo`, con `_` (default) = `-fechaCreacion`. El `-` = descendente.
+- **Orden semántico de prioridad GRATIS:** como el enum se guarda como número (Baja=0..Critica=3), `OrderByDescending(Prioridad)` da Critica→Alta→Media→Baja (no alfabético). Es el dividendo de las decisiones "enum en orden por importancia" + "guardar como número".
+- Se traduce a `ORDER BY` en SQL (en el servidor). Verificado: `-prioridad` saca Críticas primero.
 
-### Commits (pendiente de commitear este bloque)
+### Paginación `page`/`pageSize` (§6.2) ✅
+- **Validación en el CONTROLLER** (antes de tocar la BD): `page < 1 || pageSize > 100 || pageSize < 1` → **400 `PARAMETRO_INVALIDO`** con `BadRequest(...)`. Fail fast.
+- **Paginación en memoria** con `Skip((page-1)*pageSize).Take(pageSize)`. Decisión: como `vencidas` se filtra en memoria, paginar también en memoria evita el choque SQL-vs-memoria. Trade-off honesto: válido a esta escala; a gran escala se movería a SQL.
+- `total = items.Count` (tras TODOS los filtros, incluido vencidas). `totalPaginas = Math.Ceiling(total / (double)pageSize)` (el `(double)` fuerza división decimal).
+- Verificado: `page=3, pageSize=5` → 5 items (00011-00015), total 25, totalPaginas 5. `pageSize=200` y `page=0` → 400.
+
+### Estado
+- **`GET /solicitudes` TERMINADO.** RN-01 + RN-03 + 5 filtros + búsqueda + orden semántico + paginación validada, todo en el servidor. 4/9 endpoints listos (health, login, me, solicitudes-listado).
+
+### Commits hechos
+```
+feat(solicitudes): GET /solicitudes con RN-01, RN-03, filtros y busqueda
+feat(solicitudes): ordenamiento semantico y paginacion con validacion 400
+```
 
 ---
 
@@ -434,11 +442,12 @@ feat(auth): endpoints POST /auth/login y GET /me, Swagger con esquema Bearer
 
 1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
 2. **Login con JWT + `/me`.** ✅ **HECHO** (login, /me, Swagger Bearer). 3 endpoints listos (health, login, me).
-3. **`GET /solicitudes` con filtro por tenant (RN-01).** 🚧 RN-01, RN-03, filtros y búsqueda ✅. Falta: ordenamiento `sort` (orden semántico de prioridad) y paginación con validación 400. ← **AQUÍ VAMOS**
-4. **Pruebas de permisos (RN-03)** cuando exista `Aplicacion` → cierra la 3.ª área de §5.4.
-5. **Resto de endpoints:** `GET /categorias`, `POST /solicitudes`, `GET /solicitudes/{id}`, `PUT /solicitudes/{id}`, `POST /solicitudes/{id}/transiciones`. Más el **manejador global de errores** (§5.3).
-6. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
-7. **README, DECISIONES.md y limpieza** (mínimo 8 commits significativos, sin `bin/`/`obj/`/`node_modules/`/`.db`).
+3. **`GET /solicitudes` con filtro por tenant (RN-01).** ✅ **TERMINADO** (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada). 4/9 endpoints.
+4. **Resto de endpoints:** `GET /categorias` (fácil), `POST /solicitudes` (crear + código + SLA), `GET /solicitudes/{id}` (detalle), `PUT /solicitudes/{id}` (editar + recalcular SLA), `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06). ← **AQUÍ VAMOS** (empezar por categorías)
+5. **Manejador global de errores** (§5.3) + centralizar `application/problem+json` + arreglar sufijo `Z` en fechas.
+6. **Pruebas de permisos (RN-03)** → cierra la 3.ª área de §5.4.
+7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
+8. **README, DECISIONES.md y limpieza** (mínimo 8 commits significativos, sin `bin/`/`obj/`/`node_modules/`/`.db`).
 
 ---
 
@@ -454,4 +463,4 @@ feat(auth): endpoints POST /auth/login y GET /me, Swagger con esquema Bearer
 
 ---
 
-*Última actualización: GET /solicitudes con RN-01 (aislamiento) y RN-03 (rol) verificados en 3 usuarios, más filtros, vencidas y búsqueda q. Enums serializados por nombre. Siguiente: ordenamiento (orden semántico de prioridad) y paginación con validación.*
+*Última actualización: GET /solicitudes TERMINADO — el endpoint más complejo (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada), todo en el servidor. 4/9 endpoints. Siguiente: GET /categorias y luego POST/PUT/detalle/transiciones.*

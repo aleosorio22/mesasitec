@@ -41,6 +41,7 @@ public class ServicioSolicitudes : IServicioSolicitudes
 
         if (filtros.AgenteId is not null)
             query = query.Where(s => s.AgenteId == filtros.AgenteId);
+
         // Búsqueda de texto (q): en título, descripción o código, sin distinguir mayúsculas.
         if (!string.IsNullOrWhiteSpace(filtros.Q))
         {
@@ -56,15 +57,23 @@ public class ServicioSolicitudes : IServicioSolicitudes
             .Include(s => s.Categoria)
             .Include(s => s.Agente);
 
-        // 5. Total antes de paginar.
-        var total = await query.CountAsync();
+        // 5. Ordenamiento (§6.2). Default: -fechaCreacion (más recientes primero).
+        //    Al ordenar por prioridad, el orden es SEMÁNTICO (Critica>Alta>Media>Baja):
+        //    sale gratis porque el enum se guarda como número (Baja=0..Critica=3).
+        query = filtros.Sort switch
+        {
+            "fechaCreacion"  => query.OrderBy(s => s.FechaCreacion),
+            "-fechaCreacion" => query.OrderByDescending(s => s.FechaCreacion),
+            "prioridad"      => query.OrderBy(s => s.Prioridad),           // Baja→Critica
+            "-prioridad"     => query.OrderByDescending(s => s.Prioridad), // Critica→Baja
+            "codigo"         => query.OrderBy(s => s.Codigo),
+            _                => query.OrderByDescending(s => s.FechaCreacion), // default
+        };
 
-        // 6. Ejecuta.
-        var solicitudes = await query
-            .OrderByDescending(s => s.FechaCreacion)
-            .ToListAsync();
+        //6 Ejecutar 
+        var solicitudes = await query.ToListAsync();
 
-        // 7. Mapeo a DTO.
+        // 7. Mapeo a DTO (aquí se calcula "vencida" con el dominio).
         var items = solicitudes
             .Select(s => new SolicitudListaDto(
                 s.Id,
@@ -79,15 +88,25 @@ public class ServicioSolicitudes : IServicioSolicitudes
                 CalculadoraSla.EstaVencida(s.FechaLimiteSla, s.Estado, ahora)))
             .ToList();
 
-        // 8. Filtro "vencidas": OJO, va DESPUÉS del mapeo (ver explicación).
+        // 8. Filtro "vencidas" en memoria (vencida no es columna).
         if (filtros.Vencidas is not null)
             items = items.Where(i => i.Vencida == filtros.Vencidas).ToList();
 
+        // 9. Total REAL: después de TODOS los filtros (incluido vencidas).
+        var total = items.Count;
+
+        // 10. Paginación (§6.2). Skip/Take sobre la lista final.
+        var totalPaginas = (int)Math.Ceiling(total / (double)filtros.PageSize);
+        var itemsPagina = items
+            .Skip((filtros.Page - 1) * filtros.PageSize)
+            .Take(filtros.PageSize)
+            .ToList();
+
         return new ResultadoPaginado<SolicitudListaDto>(
-            Items: items,
-            Page: 1,
-            PageSize: items.Count,
-            Total: filtros.Vencidas is not null ? items.Count : total,
-            TotalPaginas: 1);
+            Items: itemsPagina,
+            Page: filtros.Page,
+            PageSize: filtros.PageSize,
+            Total: total,
+            TotalPaginas: totalPaginas);
     }
 }
