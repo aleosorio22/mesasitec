@@ -257,4 +257,105 @@ public class ServicioSolicitudes : IServicioSolicitudes
 
         return (ResultadoEdicion.Ok, MapearDetalle(solicitud, ahora));
     }
+    public async Task<(ResultadoTransicion resultado, SolicitudDetalleDto? detalle)> EjecutarTransicionAsync(
+        Guid tenantId, Guid usuarioId, Rol rol, Guid solicitudId, TransicionRequest request)
+    {
+        var ahora = DateTime.UtcNow;
+
+        // 1. Buscar la solicitud con relaciones (RN-01: filtro por tenant).
+        var solicitud = await _db.Solicitudes
+            .Include(s => s.Categoria)
+            .Include(s => s.Solicitante)
+            .Include(s => s.Agente)
+            .FirstOrDefaultAsync(s => s.Id == solicitudId && s.TenantId == tenantId);
+
+        // No existe o es de otra organización -> 404.
+        if (solicitud is null)
+            return (ResultadoTransicion.NoEncontrada, null);
+
+        // 2. RN-03: ¿este rol puede ejecutar esta acción?
+        //    Algunas acciones dependen también de si es dueño (cerrar por Solicitante).
+        if (!PuedeEjecutar(request.Accion, rol, solicitud, usuarioId))
+        {
+            // Para un Solicitante sobre una solicitud AJENA, RN-01 manda 404 (no revelar).
+            // Para permiso denegado sobre una propia/visible, 403.
+            if (rol == Rol.Solicitante && solicitud.SolicitanteId != usuarioId)
+                return (ResultadoTransicion.NoEncontrada, null);  // 404
+            return (ResultadoTransicion.NoPermitida, null);       // 403
+        }
+
+        // 3. RN-02: ¿la transición es válida desde el estado actual?
+        //    Usa la máquina de estados del Dominio (ya probada con 26 tests).
+        if (!MaquinaEstados.TryAplicar(solicitud.Estado, request.Accion, out var nuevoEstado))
+            return (ResultadoTransicion.TransicionInvalida, null);  // 409
+
+        // 4. Validaciones y efectos secundarios específicos de cada acción.
+        switch (request.Accion)
+        {
+            case Accion.Asignar:
+                // RN-05: el agente debe existir, estar activo, ser del tenant, rol Agente/Admin.
+                var agente = await _db.Usuarios.FirstOrDefaultAsync(u =>
+                    u.Id == request.AgenteId &&
+                    u.TenantId == tenantId &&
+                    u.Activo &&
+                    (u.Rol == Rol.Agente || u.Rol == Rol.Admin));
+
+                if (agente is null)
+                    return (ResultadoTransicion.AgenteInvalido, null);  // 422
+
+                solicitud.AgenteId = agente.Id;
+                break;
+
+            case Accion.Resolver:
+                // RN-06: motivo de al menos 20 caracteres.
+                if (string.IsNullOrWhiteSpace(request.Motivo) || request.Motivo.Trim().Length < 20)
+                    return (ResultadoTransicion.MotivoRequerido, null);  // 422
+
+                solicitud.MotivoResolucion = request.Motivo.Trim();
+                solicitud.FechaResolucion = ahora;
+                break;
+
+            case Accion.Cancelar:
+                // RN-06: motivo de al menos 10 caracteres.
+                if (string.IsNullOrWhiteSpace(request.Motivo) || request.Motivo.Trim().Length < 10)
+                    return (ResultadoTransicion.MotivoRequerido, null);  // 422
+
+                solicitud.MotivoCancelacion = request.Motivo.Trim();
+                break;
+
+            // iniciar, cerrar, reabrir: no requieren datos extra.
+        }
+
+        // 5. Aplicar el nuevo estado y guardar.
+        solicitud.Estado = nuevoEstado;
+        await _db.SaveChangesAsync();
+
+        // 6. Recargar el agente si se asignó (para el DTO), y devolver el detalle.
+        await _db.Entry(solicitud).Reference(s => s.Agente).LoadAsync();
+
+        return (ResultadoTransicion.Ok, MapearDetalle(solicitud, ahora));
+    }
+
+    // RN-03: matriz de permisos por acción. Devuelve true si el rol puede ejecutarla.
+    private static bool PuedeEjecutar(Accion accion, Rol rol, Solicitud solicitud, Guid usuarioId)
+    {
+        bool esDueno = solicitud.SolicitanteId == usuarioId;
+
+        return accion switch
+        {
+            // asignar/iniciar/resolver/reabrir: Admin o Agente.
+            Accion.Asignar or Accion.Iniciar or Accion.Resolver or Accion.Reabrir
+                => rol is Rol.Admin or Rol.Agente,
+
+            // cerrar: Admin, Agente, o Solicitante (solo las propias).
+            Accion.Cerrar
+                => rol is Rol.Admin or Rol.Agente || (rol == Rol.Solicitante && esDueno),
+
+            // cancelar: SOLO Admin.
+            Accion.Cancelar
+                => rol == Rol.Admin,
+
+            _ => false,
+        };
+    }
 }

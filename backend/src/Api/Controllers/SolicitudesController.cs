@@ -121,4 +121,62 @@ public class SolicitudesController : ApiControllerBase
             _ => StatusCode(500),
         };
     }
+    [HttpPost("{id:guid}/transiciones")]
+    public async Task<IActionResult> Transicionar(Guid id, [FromBody] TransicionRequest request)
+    {
+        var (resultado, detalle) = await _servicio.EjecutarTransicionAsync(
+            TenantIdActual, UsuarioIdActual, RolActual, id, request);
+
+        return resultado switch
+        {
+            ResultadoTransicion.Ok => Ok(detalle),
+
+            ResultadoTransicion.NoEncontrada => NotFound(new
+            {
+                type = "https://mesasitec.local/errores/recurso-no-encontrado",
+                title = "Recurso no encontrado",
+                status = 404,
+                detail = "La solicitud no existe.",
+                codigo = "RECURSO_NO_ENCONTRADO",
+            }),
+
+            ResultadoTransicion.NoPermitida => StatusCode(403, new
+            {
+                type = "https://mesasitec.local/errores/operacion-no-permitida",
+                title = "Operación no permitida",
+                status = 403,
+                detail = "Su rol no permite ejecutar esta acción.",
+                codigo = "OPERACION_NO_PERMITIDA",
+            }),
+
+            ResultadoTransicion.TransicionInvalida => Conflict(new
+            {
+                type = "https://mesasitec.local/errores/transicion-invalida",
+                title = "Transición inválida",
+                status = 409,
+                detail = "La acción no es válida para el estado actual de la solicitud.",
+                codigo = "TRANSICION_INVALIDA",
+            }),
+
+            ResultadoTransicion.AgenteInvalido => UnprocessableEntity(new
+            {
+                type = "https://mesasitec.local/errores/agente-invalido",
+                title = "Agente inválido",
+                status = 422,
+                detail = "El agente no existe, no está activo, o no pertenece a su organización.",
+                codigo = "AGENTE_INVALIDO",
+            }),
+
+            ResultadoTransicion.MotivoRequerido => UnprocessableEntity(new
+            {
+                type = "https://mesasitec.local/errores/motivo-requerido",
+                title = "Motivo requerido",
+                status = 422,
+                detail = "La acción requiere un motivo con la longitud mínima.",
+                codigo = "MOTIVO_REQUERIDO",
+            }),
+
+            _ => StatusCode(500),
+        };
+    }
 }

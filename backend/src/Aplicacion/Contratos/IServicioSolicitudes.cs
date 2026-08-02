@@ -20,8 +20,13 @@ public interface IServicioSolicitudes
     Task<SolicitudDetalleDto?> ObtenerDetalleAsync(
         Guid tenantId, Guid id, Guid usuarioId, Rol rol);
 
-    // Edita una solicitud (RN-08: solo Nueva/Asignada). Devuelve el resultado y,
+    // Edita una solicitud (RN-08: solo Nueva/Asignada). Devuelve el resultado y,   
     // si fue Ok, el detalle actualizado.
     Task<(ResultadoEdicion resultado, SolicitudDetalleDto? detalle)> EditarAsync(
         Guid tenantId, Guid id, Guid usuarioId, Rol rol, EditarSolicitudRequest request);
+    
+    // Ejecuta una acción del flujo (RN-02, RN-03, RN-05, RN-06).
+    // Devuelve el resultado y, si fue Ok, el detalle actualizado.
+    Task<(ResultadoTransicion resultado, SolicitudDetalleDto? detalle)> EjecutarTransicionAsync(
+        Guid tenantId, Guid usuarioId, Rol rol, Guid solicitudId, TransicionRequest request);
 }
