@@ -273,16 +273,27 @@ public class ServicioSolicitudes : IServicioSolicitudes
         if (solicitud is null)
             return (ResultadoTransicion.NoEncontrada, null);
 
+        // // 2. RN-03: ¿este rol puede ejecutar esta acción?
+        // //    Algunas acciones dependen también de si es dueño (cerrar por Solicitante).
+        // if (!PuedeEjecutar(request.Accion, rol, solicitud, usuarioId))
+        // {
+        //     // Para un Solicitante sobre una solicitud AJENA, RN-01 manda 404 (no revelar).
+        //     // Para permiso denegado sobre una propia/visible, 403.
+        //     if (rol == Rol.Solicitante && solicitud.SolicitanteId != usuarioId)
+        //         return (ResultadoTransicion.NoEncontrada, null);  // 404
+        //     return (ResultadoTransicion.NoPermitida, null);       // 403
+        // }
         // 2. RN-03: ¿este rol puede ejecutar esta acción?
-        //    Algunas acciones dependen también de si es dueño (cerrar por Solicitante).
-        if (!PuedeEjecutar(request.Accion, rol, solicitud, usuarioId))
+       bool esDueno = solicitud.SolicitanteId == usuarioId;
+        if (!PermisosAcciones.PuedeEjecutar(request.Accion, rol, esDueno))
         {
-            // Para un Solicitante sobre una solicitud AJENA, RN-01 manda 404 (no revelar).
-            // Para permiso denegado sobre una propia/visible, 403.
+            // Un Solicitante sobre una solicitud AJENA -> 404 (RN-01, no revelar).
+            // Permiso denegado sobre una propia/visible -> 403.
             if (rol == Rol.Solicitante && solicitud.SolicitanteId != usuarioId)
                 return (ResultadoTransicion.NoEncontrada, null);  // 404
             return (ResultadoTransicion.NoPermitida, null);       // 403
         }
+
 
         // 3. RN-02: ¿la transición es válida desde el estado actual?
         //    Usa la máquina de estados del Dominio (ya probada con 26 tests).
@@ -336,26 +347,5 @@ public class ServicioSolicitudes : IServicioSolicitudes
         return (ResultadoTransicion.Ok, MapearDetalle(solicitud, ahora));
     }
 
-    // RN-03: matriz de permisos por acción. Devuelve true si el rol puede ejecutarla.
-    private static bool PuedeEjecutar(Accion accion, Rol rol, Solicitud solicitud, Guid usuarioId)
-    {
-        bool esDueno = solicitud.SolicitanteId == usuarioId;
-
-        return accion switch
-        {
-            // asignar/iniciar/resolver/reabrir: Admin o Agente.
-            Accion.Asignar or Accion.Iniciar or Accion.Resolver or Accion.Reabrir
-                => rol is Rol.Admin or Rol.Agente,
-
-            // cerrar: Admin, Agente, o Solicitante (solo las propias).
-            Accion.Cerrar
-                => rol is Rol.Admin or Rol.Agente || (rol == Rol.Solicitante && esDueno),
-
-            // cancelar: SOLO Admin.
-            Accion.Cancelar
-                => rol == Rol.Admin,
-
-            _ => false,
-        };
-    }
+      
 }
