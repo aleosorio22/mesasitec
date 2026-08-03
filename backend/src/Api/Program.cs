@@ -155,6 +155,7 @@ builder.Services.AddScoped<IGeneradorTokens, GeneradorTokens>();
 builder.Services.AddScoped<IServicioAuth, ServicioAuth>();
 builder.Services.AddScoped<IServicioSolicitudes, ServicioSolicitudes>();
 builder.Services.AddScoped<IServicioCategorias, ServicioCategorias>();
+builder.Services.AddScoped<IServicioUsuarios, ServicioUsuarios>();
 // Manejador global de excepciones (§5.3).
 builder.Services.AddExceptionHandler<ManejadorExcepcionesGlobal>();
 builder.Services.AddProblemDetails();
