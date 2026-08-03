@@ -578,7 +578,33 @@ feat(errores): manejador global, formato problem+json unificado y fechas UTC con
 
 ---
 
+## FASE 13 — Tests de permisos RN-03 + refactor al Dominio ✅ · BACKEND 100% TERMINADO 🎉
+
+### Refactor: permisos al Dominio (mejora de diseño)
+- La lógica de permisos vivía en un método privado `PuedeEjecutar` dentro de `ServicioSolicitudes` (Infraestructura) → no testeable (privado, y `Tests` no referencia Infraestructura).
+- **Movida a `Mesasitec.Dominio.Reglas.PermisosAcciones`** (clase static, pública), junto a `MaquinaEstados` y `CalculadoraSla`. Firma refinada: `PuedeEjecutar(Accion, Rol, bool esDueno)` — recibe `esDueno` ya calculado, no la entidad `Solicitud`. Así la regla es 100% pura (no conoce entidades). El servicio calcula `esDueno` y la invoca.
+- **Argumento para entrevista:** las 3 reglas de negocio puras (RN-02, RN-03, RN-04) viven juntas en el Dominio, testeadas; la Infraestructura solo las invoca.
+
+### Tests RN-03 (`PermisosAccionesTests`)
+- 19 tests con `[Theory]`: gestión (asignar/iniciar/resolver/reabrir) solo Admin/Agente; Solicitante no; cancelar solo Admin (ni Agente); cerrar por Solicitante solo si es dueño (el caso sutil: mismo rol, distinto resultado según `esDueno`).
+- **`dotnet test` → 45/45 verdes** (26 previos + 19 nuevos). Cierra las **3 áreas de §5.4**: máquina de estados ✅, SLA ✅, permisos ✅.
+
+### Tropiezo resuelto
+- Al reemplazar el bloque de permisos en `EjecutarTransicionAsync`, quedó un `if` que abría `{` sin cerrar (faltaba el cuerpo 404/403) + una `}` extra al final → `CS1513`. Se restauró el cuerpo del `if` (lógica 404-vs-403) y se cuadraron las llaves.
+
+### 🎉 BACKEND 100% COMPLETO
+9/9 endpoints · RN-01..RN-07 · manejador global + problem+json + fechas Z · 45 tests (3 áreas §5.4) · arquitectura por capas con reglas puras en el Dominio.
+
+### Commit hecho
+```
+refactor: mueve permisos RN-03 al Dominio + tests (cierra 3 areas de 5.4)
+```
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
+
+- **Errores de validación automáticos (400/422 de ASP.NET):** cuando falla una Data Annotation (ej. título corto) o un enum inválido, ASP.NET devuelve su formato estándar (con `traceId`), NO el `problem+json` con `codigo` + `errores`. Pendiente: personalizar `InvalidModelStateResponseFactory` para unificarlos al contrato (§6.1 pide `codigo: VALIDACION` + campo `errores`). No bloqueante pero suma.
 
 - **Realismo cronológico del flujo (menor, NO arreglar):** con la fecha derivada del correlativo, una solicitud "Cancelada" puede ser más reciente que una "Resuelta". El enunciado no pide simular el flujo temporal, solo cubrir estados/prioridades. Respuesta lista para entrevista: se priorizó cobertura de estados sobre simulación temporal.
 
@@ -603,8 +629,8 @@ feat(errores): manejador global, formato problem+json unificado y fechas UTC con
 3. **`GET /solicitudes` con filtro por tenant (RN-01).** ✅ **TERMINADO** (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada). 4/9 endpoints.
 4. **Resto de endpoints:** ✅ **9/9 COMPLETOS** (login, me, categorías, listado, crear, detalle, editar, transiciones, health). **BACKEND FUNCIONAL COMPLETO.**
 5. **Pulido de errores** ✅ HECHO (manejador global §5.3, formato problem+json, fechas con Z, códigos alineados).
-6. **Pruebas de permisos (RN-03)** con xUnit → cierra la 3.ª área de §5.4 (`PuedeEjecutar` es testeable). ← **AQUÍ VAMOS**
-7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
+6. **Pruebas de permisos (RN-03)** con xUnit ✅ HECHO. **BACKEND 100% TERMINADO** (45 tests, 3 áreas §5.4).
+7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error. ← **AQUÍ VAMOS**
 8. **README, DECISIONES.md y limpieza** (mínimo 8 commits significativos, sin `bin/`/`obj/`/`node_modules/`/`.db`).
 5. **Manejador global de errores** (§5.3) + centralizar `application/problem+json` + arreglar sufijo `Z` en fechas.
 6. **Pruebas de permisos (RN-03)** → cierra la 3.ª área de §5.4.
@@ -625,4 +651,4 @@ feat(errores): manejador global, formato problem+json unificado y fechas UTC con
 
 ---
 
-*Última actualización: pulido de errores COMPLETO — manejador global (§5.3), formato problem+json unificado, fechas con Z, códigos alineados con la tabla oficial. Backend redondo. Siguiente: tests de permisos RN-03 (cierra §5.4), luego frontend.*
+*Última actualización: 🎉 BACKEND 100% TERMINADO — 9/9 endpoints, RN-01..07, manejador global, 45 tests (3 áreas §5.4), permisos RN-03 refactorizados al Dominio. Siguiente: FRONTEND (Vue 3 + TS) — terreno cómodo del dev.*
