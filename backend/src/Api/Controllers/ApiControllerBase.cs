@@ -22,4 +22,10 @@ public abstract class ApiControllerBase : ControllerBase
     // El rol del usuario autenticado (RN-03: permisos).
     protected Rol RolActual =>
         Enum.Parse<Rol>(User.FindFirst("rol")!.Value);
+    // Devuelve un ErrorResponse con el Content-Type correcto (application/problem+json, §6.1).
+    protected IActionResult Problema(Mesasitec.Api.Errores.ErrorResponse error)
+    {
+        Response.ContentType = "application/problem+json";
+        return StatusCode(error.Status, error);
+    }
 }

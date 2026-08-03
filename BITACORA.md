@@ -504,12 +504,81 @@ feat(solicitudes): PUT editar con recalculo de SLA y regla de estado por rol (RN
 
 ---
 
+## FASE 11 — POST /solicitudes/{id}/transiciones (el gran final) ✅ · BACKEND COMPLETO 🎉
+
+### La pieza que conecta el Dominio con el mundo real
+- El corazón (RN-02) es `MaquinaEstados.TryAplicar` — el código puro testeado con 26 pruebas al inicio. Aquí NO se reimplementa: se delega al Dominio. Todo el trabajo del Dominio cobra sentido en una línea.
+
+### DTOs
+- `TransicionRequest` (class): `Accion` (enum, obligatoria), `AgenteId?` (solo asignar), `Motivo?` (resolver/cancelar). La longitud del motivo NO va con `[StringLength]` porque el mínimo depende de la acción (20/10) → se valida en el servicio.
+- `ResultadoTransicion` (enum, 6 casos): Ok, NoEncontrada, NoPermitida, TransicionInvalida, AgenteInvalido, MotivoRequerido. **Todos sus códigos SÍ están en la tabla §6.1** (a diferencia del CONFLICTO_ESTADO dudoso).
+
+### Orden de validación (de lo general a lo específico)
+1. **Existe** (RN-01, filtro tenant) → 404.
+2. **Permiso del rol** (RN-03) → 403 (o 404 si un Solicitante toca una ajena: RN-01 no revela).
+3. **Transición válida** (RN-02, `MaquinaEstados.TryAplicar`) → 409.
+4. **Datos de la acción** (RN-05 agente / RN-06 motivo) → 422.
+5. Aplicar estado + `SaveChanges`.
+
+### PuedeEjecutar (matriz RN-03, método privado y testeable)
+- `asignar/iniciar/resolver/reabrir` → Admin o Agente.
+- `cerrar` → Admin, Agente, o Solicitante **dueño**.
+- `cancelar` → **solo Admin**.
+- Sacado a método aparte para legibilidad Y para poder testearlo sin levantar la app (§5.4 pide tests de RN-03).
+
+### Efectos secundarios por acción
+- **Asignar:** valida agente (RN-05: existe, activo, del tenant, rol Agente/Admin) → si no, 422 `AGENTE_INVALIDO`. Setea `AgenteId`.
+- **Resolver:** motivo ≥20 chars (tras `Trim`) → si no, 422 `MOTIVO_REQUERIDO`. Setea `MotivoResolucion` + `FechaResolucion`.
+- **Cancelar:** motivo ≥10 chars → si no, 422 `MOTIVO_REQUERIDO`. Setea `MotivoCancelacion`.
+- iniciar/cerrar/reabrir: sin datos extra.
+
+### Verificación — flujo completo recorrido
+- Nueva → **asignar** → Asignada (agente asignado) → **iniciar** → EnProceso → **resolver** (motivo 20+) → Resuelta (fechaResolucion + motivo guardados, `vencida` pasa a false) → **cerrar** → Cerrada.
+- **Broche:** `iniciar` sobre Cerrada → **409 TRANSICION_INVALIDA** (estado final). RN-02 funcionando en producción con el código testeado.
+
+### Diagnóstico de la `Z` (confirmado aquí)
+- `fechaResolucion` recién creada (`UtcNow`) sale CON `Z`; la misma releída de SQLite sale SIN `Z`. → El problema de la `Z` está en la LECTURA desde SQLite (pierde el `DateTimeKind`), no en la escritura. El fix va en configurar EF Core para marcar UTC al leer.
+
+### 🎉 BACKEND COMPLETO — 9/9 endpoints
+login · me · categorias · solicitudes(listado) · crear · detalle · editar · transiciones · health
+
+### Commit hecho
+```
+feat(solicitudes): POST transiciones con maquina de estados (RN-02, RN-03, RN-05, RN-06)
+```
+
+---
+
+## FASE 12 — Pulido de errores ✅ (3 deudas saldadas)
+
+### Manejador global de excepciones (§5.3, obligatorio) ✅
+- `ManejadorExcepcionesGlobal : IExceptionHandler` (mecanismo .NET 8). Atrapa CUALQUIER excepción no controlada → loguea la real en el servidor (para depurar) pero devuelve al cliente un **500 genérico** con formato del contrato, sin stack trace ni detalles internos.
+- Registro en `Program.cs`: `AddExceptionHandler<...>()` + `AddProblemDetails()` + `app.UseExceptionHandler()` temprano en el pipeline (envuelve todo lo posterior).
+
+### Formato de error unificado (§6.1) ✅
+- Record `ErrorResponse` (Type, Title, Status, Detail, Codigo, + `Errores?` opcional para validación, con `JsonIgnore(WhenWritingNull)`).
+- Fábrica `ErroresApi` (clase static): un método por código de la tabla oficial. **Renombrada de `Errores` a `ErroresApi`** para evitar choque con el namespace `Mesasitec.Api.Errores` (lección: clase y namespace no deben coincidir → CS0234).
+- Helper `Problema(ErrorResponse)` en `ApiControllerBase`: fija `Content-Type: application/problem+json` y devuelve el status. Los 4 controllers migrados a `ApiControllerBase` + fábrica (auth/me heredan ahora de la base también; `[ApiController]` vive en la base).
+
+### Fix de la `Z` en fechas ✅
+- Convertidores JSON `DateTimeUtcConverter` y `DateTimeUtcNullableConverter`: al serializar, `DateTime.SpecifyKind(v, Utc)` + formato `yyyy-MM-ddTHH:mm:ss.fffZ`. Registrados en `AddJsonOptions`. Resuelve que SQLite pierda el `DateTimeKind` al leer (todas las fechas ya eran UTC; solo faltaba la etiqueta). Ahora TODA fecha sale con `Z`.
+
+### Corrección del código de error inventado ✅
+- El `CONFLICTO_ESTADO` (que NO estaba en la tabla §6.1) se reemplazó por `VALIDACION` (422) para "no editable por estado". Todos los códigos ahora coinciden literales con la tabla oficial.
+
+### Verificado
+- 404 → `content-type: application/problem+json` + `codigo: RECURSO_NO_ENCONTRADO`.
+- Editar Resuelta → 422 `VALIDACION` (antes 409 CONFLICTO_ESTADO).
+- Fechas con `Z` en todas las respuestas.
+
+### Commit hecho
+```
+feat(errores): manejador global, formato problem+json unificado y fechas UTC con Z
+```
+
+---
+
 ## Riesgos abiertos / deuda técnica (no perder de vista)
-
-- **Decisión documentada (ambigüedad RN-03 edición):** Admin/Agente pueden editar en Nueva/Asignada/EnProceso (el enunciado solo fija estado para Solicitante = Nueva). Va en DECISIONES.md.
-- **Código de error de "estado no editable":** se usó `CONFLICTO_ESTADO`, que NO está en la tabla del §6.1. Revisar al unificar errores: quizá deba ser otro, o documentarse. Las pruebas automáticas revisan el campo `codigo`.
-
-- **Fechas sin sufijo `Z`:** las respuestas devuelven `"2026-01-22T14:00:00"` sin la `Z` que exige el contrato (ISO-8601 UTC, §6). Detalle de serialización JSON a corregir globalmente (buen momento: junto al manejador de errores). Las pruebas automáticas podrían ser estrictas.
 
 - **Realismo cronológico del flujo (menor, NO arreglar):** con la fecha derivada del correlativo, una solicitud "Cancelada" puede ser más reciente que una "Resuelta". El enunciado no pide simular el flujo temporal, solo cubrir estados/prioridades. Respuesta lista para entrevista: se priorizó cobertura de estados sobre simulación temporal.
 
@@ -532,7 +601,11 @@ feat(solicitudes): PUT editar con recalculo de SLA y regla de estado por rol (RN
 1. **EF Core + migración + arranque automático + puerto 5080 + datos semilla** ✅ hecho. **GET /health** ✅ hecho. **Capa de datos TERMINADA.**
 2. **Login con JWT + `/me`.** ✅ **HECHO** (login, /me, Swagger Bearer). 3 endpoints listos (health, login, me).
 3. **`GET /solicitudes` con filtro por tenant (RN-01).** ✅ **TERMINADO** (RN-01, RN-03, filtros, búsqueda, orden semántico, paginación validada). 4/9 endpoints.
-4. **Resto de endpoints:** `GET /categorias` ✅, `POST /solicitudes` ✅, `GET /{id}` ✅, `PUT /{id}` ✅ (8/9). Falta: `POST /solicitudes/{id}/transiciones` (máquina de estados: RN-02+03+05+06) ← **AQUÍ VAMOS** (el gran final del backend).
+4. **Resto de endpoints:** ✅ **9/9 COMPLETOS** (login, me, categorías, listado, crear, detalle, editar, transiciones, health). **BACKEND FUNCIONAL COMPLETO.**
+5. **Pulido de errores** ✅ HECHO (manejador global §5.3, formato problem+json, fechas con Z, códigos alineados).
+6. **Pruebas de permisos (RN-03)** con xUnit → cierra la 3.ª área de §5.4 (`PuedeEjecutar` es testeable). ← **AQUÍ VAMOS**
+7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
+8. **README, DECISIONES.md y limpieza** (mínimo 8 commits significativos, sin `bin/`/`obj/`/`node_modules/`/`.db`).
 5. **Manejador global de errores** (§5.3) + centralizar `application/problem+json` + arreglar sufijo `Z` en fechas.
 6. **Pruebas de permisos (RN-03)** → cierra la 3.ª área de §5.4.
 7. **Frontend** (Vue): login → listado → detalle → formulario. Con `data-testid` literales y estados cargando/vacío/error.
@@ -552,4 +625,4 @@ feat(solicitudes): PUT editar con recalculo de SLA y regla de estado por rol (RN
 
 ---
 
-*Última actualización: PUT editar hecho + CORREGIDA la regla de estado (era una "RN-08" inventada; la real es RN-03: Solicitante solo Nueva, Admin/Agente hasta EnProceso). 8/9 endpoints. Siguiente: POST transiciones (máquina de estados, el gran final).*
+*Última actualización: pulido de errores COMPLETO — manejador global (§5.3), formato problem+json unificado, fechas con Z, códigos alineados con la tabla oficial. Backend redondo. Siguiente: tests de permisos RN-03 (cierra §5.4), luego frontend.*

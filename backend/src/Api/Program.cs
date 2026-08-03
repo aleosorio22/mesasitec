@@ -7,6 +7,7 @@ using Mesasitec.Infraestructura.Seguridad;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.OpenApi.Models;
 using Mesasitec.Infraestructura.Servicios;
+using Mesasitec.Api.Errores;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,6 +19,10 @@ builder.Services.AddControllers()
         // Serializa/deserializa los enums por su NOMBRE ("Nueva") en vez de por número (0).
         options.JsonSerializerOptions.Converters.Add(
             new System.Text.Json.Serialization.JsonStringEnumConverter());
+        options.JsonSerializerOptions.Converters.Add(
+            new Mesasitec.Api.Serializacion.DateTimeUtcConverter());
+        options.JsonSerializerOptions.Converters.Add(
+            new Mesasitec.Api.Serializacion.DateTimeUtcNullableConverter());
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -86,6 +91,9 @@ builder.Services.AddScoped<IGeneradorTokens, GeneradorTokens>();
 builder.Services.AddScoped<IServicioAuth, ServicioAuth>();
 builder.Services.AddScoped<IServicioSolicitudes, ServicioSolicitudes>();
 builder.Services.AddScoped<IServicioCategorias, ServicioCategorias>();
+// Manejador global de excepciones (§5.3).
+builder.Services.AddExceptionHandler<ManejadorExcepcionesGlobal>();
+builder.Services.AddProblemDetails();
 
 var app = builder.Build();
 using (var scope = app.Services.CreateScope())
@@ -116,6 +124,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseExceptionHandler();
 app.UseAuthentication(); 
 app.UseAuthorization();
 
