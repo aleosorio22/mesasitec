@@ -7,25 +7,36 @@ Prueba técnica para Sitecpro.
 ## Estado actual
 
 - **Backend: completo.** Los 9 endpoints del contrato, las reglas RN-01 a RN-07 y 45 pruebas unitarias en verde.
-- **Frontend (Vue 3): en desarrollo.** Todavía no está en el repositorio.
+- **Frontend: completo.** Las 5 vistas del enunciado con sus `data-testid`, estados de carga/vacío/error y guard de rutas.
 
 El detalle de qué hay y qué falta está al final de este archivo.
 
 ## Requisitos previos
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
+- [Node.js 20.19 o superior](https://nodejs.org) (con npm)
 
 Nada más. La base de datos es SQLite (un archivo local que se crea solo), así que no hay que instalar ni configurar ningún motor de base de datos.
 
-## Cómo levantar el backend
+## Cómo levantar el proyecto
+
+En una terminal, el backend:
 
 ```bash
 cd backend/src/Api
 dotnet run
 ```
 
-Eso es todo. Al arrancar, la aplicación aplica las migraciones y siembra los datos de prueba automáticamente si la base está vacía. Queda disponible:
+En otra terminal, el frontend:
 
+```bash
+cd frontend
+npm install && npm run dev
+```
+
+Eso es todo. Al arrancar, la API aplica las migraciones y siembra los datos de prueba automáticamente si la base está vacía. Queda disponible:
+
+- Frontend: `http://localhost:5173`
 - API: `http://localhost:5080/api/v1`
 - Swagger: `http://localhost:5080/swagger`
 - Health check (sin autenticación): `http://localhost:5080/api/v1/health`
@@ -66,7 +77,14 @@ dotnet test
 
 Son 45 pruebas unitarias (xUnit) sobre la lógica del dominio: máquina de estados (RN-02), permisos por rol (RN-03) y cálculo del SLA (RN-04).
 
-## Estructura del backend
+El chequeo de tipos del frontend (TypeScript en modo `strict`, sin `any`):
+
+```bash
+cd frontend
+npm run typecheck
+```
+
+## Estructura del proyecto
 
 ```
 backend/
@@ -77,13 +95,23 @@ backend/
 │  └─ Infraestructura/  EF Core, migraciones, semilla, servicios, JWT
 └─ tests/
    └─ Tests/            pruebas unitarias del dominio
+
+frontend/
+└─ src/
+   ├─ api/              cliente HTTP único, sesión y funciones por recurso
+   ├─ components/       navegación, toast y el formulario de solicitud
+   ├─ views/            login, listado, detalle, crear y editar
+   ├─ stores/           Pinia: auth y toast
+   ├─ types/            DTOs del contrato tipados
+   ├─ router/           rutas y guard de autenticación
+   └─ utils/            reglas RN-02/RN-03 en el cliente, constantes, fechas
 ```
 
-La máquina de estados, el cálculo del SLA y los permisos por rol viven en `Dominio/Reglas` como clases estáticas puras, sin dependencia de EF ni de ASP.NET. Por eso se pueden probar sin levantar la aplicación.
+La máquina de estados, el cálculo del SLA y los permisos por rol viven en `Dominio/Reglas` como clases estáticas puras, sin dependencia de EF ni de ASP.NET. Por eso se pueden probar sin levantar la aplicación. El frontend replica esas dos reglas en `utils/reglas.ts` solo para decidir qué botones renderizar (§7.5); quien manda siempre es el backend.
 
 ## Qué está implementado y qué no
 
-Implementado:
+Implementado en el backend:
 
 - Los 9 endpoints del contrato (`/auth/login`, `/me`, `/categorias`, CRUD de solicitudes, transiciones, `/health`).
 - Aislamiento por tenant (RN-01): un recurso de otra organización responde 404, nunca 403.
@@ -92,10 +120,18 @@ Implementado:
 - Formato de error unificado `application/problem+json` con el campo `codigo` en todos los errores, incluidos los 401 del middleware JWT y los errores de validación automática.
 - JWT HS256 con expiración de 8 horas, contraseñas con BCrypt, Swagger con esquema Bearer, CORS para `http://localhost:5173`, manejador global de excepciones.
 - Migraciones y semilla automáticas al arrancar.
+- Un endpoint extra al contrato: `GET /usuarios/agentes` (agentes/admins activos del tenant). El modal de asignación lo necesita y el contrato no da otra forma de obtener esa lista. Justificado en `DECISIONES.md`.
+
+Implementado en el frontend:
+
+- Las 5 vistas (§7.3): login, listado con filtros/búsqueda/paginación server-side, detalle con acciones por estado y rol, y el mismo formulario para crear y editar.
+- Todos los `data-testid` de §7.4. Los botones de acción no permitidos no se renderizan en el DOM (§7.5).
+- Cada vista maneja sus estados de cargando, vacío y error (§7.2).
+- Cliente HTTP único que inyecta el token y redirige a `/login` ante un 401.
+- TypeScript `strict` sin `any`; `npm run typecheck` pasa limpio.
 
 Pendiente:
 
-- El frontend completo (Vue 3 + TypeScript). Es lo que sigue.
 - `docker-compose.yml` (opcional en el enunciado).
 
 Decisiones tomadas ante ambigüedades del enunciado (por ejemplo, en qué estados puede editar un Admin/Agente) están en `DECISIONES.md`.
