@@ -66,8 +66,10 @@ public class SolicitudesController : ApiControllerBase
         {
             ResultadoEdicion.Ok => Ok(detalle),
             ResultadoEdicion.NoEncontrada => Problema(ErroresApi.RecursoNoEncontrado("La solicitud no existe.")),
-            ResultadoEdicion.EstadoNoEditable => Problema(ErroresApi.Validacion(
-                "La solicitud no se puede editar en su estado actual con su rol.")),
+            // RN-03: intentar editar fuera del estado que permite el rol
+            // es "algo que su rol no permite" -> 403 OPERACION_NO_PERMITIDA.
+            ResultadoEdicion.EstadoNoEditable => Problema(ErroresApi.OperacionNoPermitida(
+                "Su rol no permite editar la solicitud en su estado actual.")),
             ResultadoEdicion.CategoriaInvalida => Problema(ErroresApi.Validacion(
                 "La categoría no existe o no pertenece a su organización.")),
             _ => Problema(ErroresApi.Interno()),

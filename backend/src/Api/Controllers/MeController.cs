@@ -1,14 +1,14 @@
 using System.Security.Claims;
 using Mesasitec.Aplicacion.Contratos;
+using Mesasitec.Api.Errores;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Mesasitec.Api.Controllers;
 
-[ApiController]
 [Route("api/v1/me")]
 [Authorize]  // 🔒 Exige token válido. Sin él -> 401 automático (lo pone la maquinaria JWT).
-public class MeController : ControllerBase
+public class MeController : ApiControllerBase
 {
     private readonly IServicioAuth _auth;
 
@@ -24,29 +24,14 @@ public class MeController : ControllerBase
         var sub = User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                   ?? User.FindFirst("sub")?.Value;
 
-        // Si por alguna razón no hay sub o no es un Guid válido -> 401.
         if (!Guid.TryParse(sub, out var usuarioId))
-            return Unauthorized(new
-            {
-                type = "https://mesasitec.local/errores/no-autenticado",
-                title = "No autenticado",
-                status = 401,
-                detail = "Token inválido.",
-                codigo = "NO_AUTENTICADO",
-            });
+            return Problema(ErroresApi.NoAutenticado("Token inválido."));
 
         var perfil = await _auth.ObtenerPerfilAsync(usuarioId);
 
         // El token es válido pero el usuario ya no existe o está inactivo -> 401.
         if (perfil is null)
-            return Unauthorized(new
-            {
-                type = "https://mesasitec.local/errores/no-autenticado",
-                title = "No autenticado",
-                status = 401,
-                detail = "Usuario no encontrado o inactivo.",
-                codigo = "NO_AUTENTICADO",
-            });
+            return Problema(ErroresApi.NoAutenticado("Usuario no encontrado o inactivo."));
 
         return Ok(perfil);
     }

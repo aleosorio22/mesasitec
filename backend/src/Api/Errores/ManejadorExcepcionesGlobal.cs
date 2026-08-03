@@ -25,8 +25,9 @@ public class ManejadorExcepcionesGlobal : IExceptionHandler
         var error = ErroresApi.Interno();
 
         httpContext.Response.StatusCode = error.Status;              // 500
-        httpContext.Response.ContentType = "application/problem+json";
-        await httpContext.Response.WriteAsJsonAsync(error, cancellationToken);
+        // El contentType va en la llamada: WriteAsJsonAsync pisa Response.ContentType.
+        await httpContext.Response.WriteAsJsonAsync(
+            error, options: null, contentType: "application/problem+json", cancellationToken);
 
         return true;
     }

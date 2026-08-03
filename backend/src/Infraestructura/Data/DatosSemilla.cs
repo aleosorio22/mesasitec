@@ -94,10 +94,11 @@ public static class DatosSemilla
             correlativo++;
 
             // La fecha se DERIVA del correlativo: a mayor correlativo, más reciente.
-            // Cada solicitud se separa 6h de la anterior. La #1 es la más vieja.
+            // Cada solicitud se separa 6h de la anterior. La #1 es la más vieja
+            // (queda 29×6h = 174h ANTES de fechaBase; la #30 caería en fechaBase).
             // Todo es offset FIJO respecto a fechaBase → datos reproducibles (§6.3).
             var horasAntesDeBase = (30 - correlativo) * 6.0;
-            var fechaCreacion = fechaBase.AddHours(horasAntesDeBase);
+            var fechaCreacion = fechaBase.AddHours(-horasAntesDeBase);
 
             var codigo = $"SOL-{fechaCreacion.Year}-{correlativo:D5}";
             var fechaLimite = CalculadoraSla.CalcularFechaLimite(

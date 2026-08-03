@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.OpenApi.Models;
 using Mesasitec.Infraestructura.Servicios;
 using Mesasitec.Api.Errores;
+using Microsoft.AspNetCore.Mvc;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +24,35 @@ builder.Services.AddControllers()
             new Mesasitec.Api.Serializacion.DateTimeUtcConverter());
         options.JsonSerializerOptions.Converters.Add(
             new Mesasitec.Api.Serializacion.DateTimeUtcNullableConverter());
+    })
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        // §6.1: los errores de validación automática deben usar NUESTRO formato
+        // (codigo + errores), no el ValidationProblemDetails default de ASP.NET.
+        //  - Cuerpo inválido (POST/PUT): 422 VALIDACION con el diccionario 'errores'.
+        //  - Query inválida (GET, ej. ?estado=foo): 400 PARAMETRO_INVALIDO.
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errores = context.ModelState
+                .Where(e => e.Value is { Errors.Count: > 0 })
+                .ToDictionary(
+                    e => System.Text.Json.JsonNamingPolicy.CamelCase.ConvertName(e.Key.TrimStart('$', '.')),
+                    e => e.Value!.Errors
+                        .Select(err => string.IsNullOrWhiteSpace(err.ErrorMessage)
+                            ? "Valor inválido."
+                            : err.ErrorMessage)
+                        .ToArray());
+
+            var error = HttpMethods.IsGet(context.HttpContext.Request.Method)
+                ? ErroresApi.ParametroInvalido("Uno o más parámetros de consulta son inválidos.")
+                : ErroresApi.Validacion("Uno o más campos son inválidos.", errores);
+
+            return new ObjectResult(error)
+            {
+                StatusCode = error.Status,
+                ContentTypes = { "application/problem+json" },
+            };
+        };
     });
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
@@ -85,7 +115,41 @@ builder.Services
             ValidateLifetime = true,
             ClockSkew = TimeSpan.Zero,
         };
+
+        // §6.1: TODOS los errores llevan problem+json con 'codigo'.
+        // Por defecto el middleware JWT responde 401/403 con cuerpo VACÍO; aquí lo reemplazamos.
+        options.Events = new JwtBearerEvents
+        {
+            // Token ausente, inválido o expirado -> 401 NO_AUTENTICADO.
+            OnChallenge = async context =>
+            {
+                context.HandleResponse(); // suprime la respuesta vacía default
+                var error = ErroresApi.NoAutenticado("Token ausente, inválido o expirado.");
+                context.Response.StatusCode = error.Status;
+                // El contentType va en la llamada: WriteAsJsonAsync pisa Response.ContentType.
+                await context.Response.WriteAsJsonAsync(
+                    error, options: null, contentType: "application/problem+json");
+            },
+            // 403 emitido por el middleware de autorización (hoy los permisos se
+            // resuelven en los servicios, pero así el contrato queda cubierto).
+            OnForbidden = async context =>
+            {
+                var error = ErroresApi.OperacionNoPermitida();
+                context.Response.StatusCode = error.Status;
+                await context.Response.WriteAsJsonAsync(
+                    error, options: null, contentType: "application/problem+json");
+            },
+        };
     });
+
+// CORS (§5.1): el frontend Vue corre en http://localhost:5173 y el navegador
+// bloquea sus llamadas a la API si este origen no está permitido explícitamente.
+const string CorsFrontend = "frontend";
+builder.Services.AddCors(options =>
+    options.AddPolicy(CorsFrontend, policy =>
+        policy.WithOrigins("http://localhost:5173")
+              .AllowAnyHeader()
+              .AllowAnyMethod()));
 
 builder.Services.AddScoped<IGeneradorTokens, GeneradorTokens>();
 builder.Services.AddScoped<IServicioAuth, ServicioAuth>();
@@ -118,14 +182,13 @@ using (var scope = app.Services.CreateScope())
 }
 
 // Configure the HTTP request pipeline.
-if (app.Environment.IsDevelopment())
-{
-    app.UseSwagger();
-    app.UseSwaggerUI();
-}
+// Swagger SIEMPRE activo (checklist §11 exige /swagger accesible, sin importar el entorno).
+app.UseSwagger();
+app.UseSwaggerUI();
 
 app.UseExceptionHandler();
-app.UseAuthentication(); 
+app.UseCors(CorsFrontend);
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();

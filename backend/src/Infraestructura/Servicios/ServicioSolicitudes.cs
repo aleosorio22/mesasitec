@@ -220,7 +220,6 @@ public class ServicioSolicitudes : IServicioSolicitudes
         if (rol == Rol.Solicitante && solicitud.SolicitanteId != usuarioId)
             return (ResultadoEdicion.NoEncontrada, null);   // 404, no revela existencia
 
-        // 4. RN-08: solo editable en Nueva o Asignada.
         // 4. RN-03: reglas de estado para editar, según el rol.
         //    - Solicitante: SOLO en estado Nueva (literal del enunciado).
         //    - Admin/Agente: mientras no esté en estado final ni resuelta
@@ -230,7 +229,7 @@ public class ServicioSolicitudes : IServicioSolicitudes
             : solicitud.Estado is (Estado.Nueva or Estado.Asignada or Estado.EnProceso);
 
         if (!editable)
-            return (ResultadoEdicion.EstadoNoEditable, null);   // 409
+            return (ResultadoEdicion.EstadoNoEditable, null);   // 403 OPERACION_NO_PERMITIDA (RN-03)
 
         // 5. Validar la nueva categoría (del tenant, activa).
         var categoria = await _db.Categorias
